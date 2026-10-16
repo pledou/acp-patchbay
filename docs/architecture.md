@@ -174,6 +174,19 @@ fact lives — is [the stores architecture](store-architecture.md).
   (or a fork) proves it, a failed second `session/new` marks it suspect. An
   agent ever reproduced failing to hold two sessions gets a curated
   wire-extension entry; the default does not turn pessimistic again.
+- **What a window spawns outlives a crash only until a later start.** Every
+  agent process and brokered terminal is recorded at spawn in one
+  machine-wide registry — its pid, its command line as the OS reads it
+  back, and its owner: the extension host that spawned it — and dropped on
+  its observed exit. A window's start ends what gone windows left running:
+  a record is a leftover only once its owner no longer runs (pid gone, or
+  running another command line), and its process is killed only while it
+  still runs the recorded command line. A window still running owns its
+  processes; no other window ends them (#108). Erase-all takes only this
+  window's records. Short programs run to their exit (`--version`, a
+  package warm-up) aren't recorded: they end on their own — a deliberate
+  scope decision. A record from before owners were recorded no longer reads
+  as one, so it is never swept.
 - Crash → visible immediately; restart is one action. After reconnect: the
   attach ladder — a never-prompted session is minted again on the agent's
   side (nothing agent-side to open; the agent hands it a fresh id, and the

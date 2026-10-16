@@ -6,22 +6,16 @@
 // taskkill /T and the CIM command line on Windows (where the ladder's
 // polite rung is already the forced one).
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
+import { IDLE, idler } from "./support/idler";
 import { stopsAtTestEnd } from "./support/teardown";
 import { SETTLE } from "./support/wait-for";
-import { commandOf, isAlive, killTree, reapOrphans, treeSpawnOptions } from "../src/orchestrator/process-tree";
+import { commandOf, commandsOf, isAlive, killTree, reapOrphans, treeSpawnOptions } from "../src/orchestrator/process-tree";
 import { AgentPool } from "../src/orchestrator/pool";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 import type { PatchbayAgentId } from "../src/shared/ids";
-
-/** A process of this Node that idles until killed; `marker` rides its
- * command line, so a read of that line can tell it from any other. A tree
- * leader unless told otherwise — as everything patchbay spawns is. */
-function idler(marker: string, { treeLeader = true } = {}) {
-  return spawn(process.execPath, ["-e", IDLE, marker], { stdio: "ignore", ...(treeLeader ? treeSpawnOptions : {}) });
-}
-const IDLE = "setInterval(() => {}, 1 << 30)";
 
 async function waitUntil(probe: () => boolean, what: string): Promise<void> {
   await vi.waitFor(
@@ -104,6 +98,20 @@ describe("commandOf", () => {
     killTree(child, "SIGKILL");
     expect(await commandOf(99_999_999)).toBe("");
   });
+
+  it("reads many in one call — each its own line, a pid no process holds absent", async () => {
+    const one = idler("patchbay-first");
+    const two = idler("patchbay-second");
+    await Promise.all([once(one, "spawn"), once(two, "spawn")]);
+    const lines = await commandsOf([one.pid!, 99_999_999, two.pid!]);
+    expect([...lines.keys()].sort()).toEqual([one.pid, two.pid].sort());
+    expect(lines.get(one.pid!)).toContain("patchbay-first");
+    expect(lines.get(two.pid!)).toContain("patchbay-second");
+    expect(lines.get(one.pid!)).toBe(await commandOf(one.pid!));
+    killTree(one, "SIGKILL");
+    killTree(two, "SIGKILL");
+    expect(await commandsOf([])).toEqual(new Map());
+  });
 });
 
 describe("reapOrphans", () => {
@@ -117,7 +125,7 @@ describe("reapOrphans", () => {
       { pid: 99_999_999, command: "long gone" }, // dead — dropped silently
     ];
 
-    const { killed, spared } = await reapOrphans(records);
+    const { killed, spared } = reapOrphans(records, await commandsOf(records.map((r) => r.pid)));
 
     expect(killed.map((r) => r.pid)).toEqual([orphan.pid]);
     expect(spared.map((r) => r.pid)).toEqual([bystander.pid]);

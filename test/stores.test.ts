@@ -26,32 +26,10 @@ import {
   MachineRulesStore,
   PermissionRulesStore,
 } from "../src/orchestrator/stores/permission-rules";
-import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "../src/orchestrator/stores/write-scope";
 import type { PatchbayAgentId } from "../src/shared/ids";
 import { STORAGE_KEYS, SECRET_FAMILIES } from "../src/orchestrator/stores/storage-keys";
-
-describe("SpawnRegistryStore", () => {
-  it("records spawns keyed by pid and clears them on observed exit", async () => {
-    const store = new SpawnRegistryStore(new MemoryKV());
-    await store.add(1234, "node agent.js", "agent");
-    await store.add(5678, "npm test", "terminal");
-    expect(store.list().map((r) => r.pid)).toEqual([1234, 5678]);
-    expect(store.get("1234")?.kind).toBe("agent");
-
-    await store.removePid(1234);
-    expect(store.list().map((r) => r.pid)).toEqual([5678]);
-  });
-
-  it("a re-spawned pid replaces the stale record — one machine, one live pid", async () => {
-    const store = new SpawnRegistryStore(new MemoryKV());
-    await store.add(1234, "node old-agent.js", "agent");
-    await store.add(1234, "npm run stress", "terminal");
-    expect(store.list()).toHaveLength(1);
-    expect(store.get("1234")?.command).toBe("npm run stress");
-  });
-});
 
 describe("LastConnectedStore — reload-continuation stamp", () => {
   it("a fresh stamp yields its ids, and is spent by the read", async () => {

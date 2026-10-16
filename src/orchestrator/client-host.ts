@@ -17,6 +17,7 @@ import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import type { PermissionBroker } from "./broker";
 import { gateRefusal, readFailure, relativeCwd, relativePath, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
+import type { TrackedProcess } from "./process-tree";
 import type { FileReadFact, FileWriteFact, TerminalCreateFact, TerminalRefFact } from "./readers/client-requests";
 import { NodeTerminalRunner, type CreateTerminalParams, type TerminalHandle, type TerminalRunner } from "./terminal-runner";
 import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
@@ -32,7 +33,7 @@ export interface ClientHostDeps {
   emit(event: AgentViewEvent): void;
   /** Every spawned command, for the process bookkeeping that outlives a
    * crash. */
-  trackProcess(handle: TerminalHandle): void;
+  trackProcess(process: TrackedProcess): void;
 }
 
 export class ClientHost {
@@ -95,7 +96,7 @@ export class ClientHost {
     // its number.
     const terminalId = `term-${randomUUID()}`;
     this.terminals.set(terminalId, { handle, owner: session.id });
-    this.deps.trackProcess(handle);
+    if (handle.process !== null) this.deps.trackProcess(handle.process);
     const blockId = terminalBlockId(terminalId);
     const patchbaySessionId = session.id;
     this.deps.emit({ kind: "terminalStarted", patchbaySessionId, blockId, command });

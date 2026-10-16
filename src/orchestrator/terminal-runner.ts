@@ -6,7 +6,7 @@
 // visibility in a real VS Code terminal is a thin wrapper layered on top in
 // the extension host (orchestrator-host.ts), not this module's concern.
 import { spawn } from "node:child_process";
-import { killTree, treeSpawnOptions } from "./process-tree";
+import { killTree, trackedChild, type TrackedProcess, treeSpawnOptions } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
 
 export interface ExitStatus {
@@ -15,9 +15,9 @@ export interface ExitStatus {
 }
 
 export interface TerminalHandle {
-  /** The spawned root's pid (null when spawn itself failed) — what the
-   * spawn registry records. A kill goes through the handle, never by it. */
-  pid: number | null;
+  /** The spawned root as the spawn registry tracks it (null when spawn
+   * itself failed). A kill goes through the handle, never by its pid. */
+  process: TrackedProcess | null;
   /** Output captured so far (stdout+stderr interleaved, ACP doesn't distinguish). */
   currentOutput(): { output: string; truncated: boolean };
   exitStatus(): ExitStatus | null;
@@ -107,7 +107,7 @@ export class NodeTerminalRunner implements TerminalRunner {
     });
 
     return {
-      pid: child.pid ?? null,
+      process: trackedChild(child),
       currentOutput: () => ({ output, truncated }),
       exitStatus: () => exited,
       waitForExit: () =>

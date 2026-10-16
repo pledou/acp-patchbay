@@ -59,7 +59,6 @@ import { OAuthCallbackRegistry } from "./oauth-callback";
 import { elicitationResponseOf, formFieldsOf, type ElicitationScope } from "./readers/elicitation";
 import { AgentPool } from "./pool";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
-import { commandOf, reapOrphans } from "./process-tree";
 import { Cancelled, Queue } from "./queue";
 import type { McpServerWork } from "../shared/protocol";
 import { type AttachWork, SessionGates } from "./session-gates";
@@ -274,7 +273,7 @@ export class Orchestrator {
     this.sessionFiles = new SessionFilesStore(join(place.globalStoragePath, "session-files"));
     this.usedCapabilities = new UsedCapabilityStore(machineKV);
     this.authLocks = new AuthLockStore(machineKV);
-    this.spawnRegistry = new SpawnRegistryStore(machineKV);
+    this.spawnRegistry = new SpawnRegistryStore(machineKV, log);
     this.agentEnv = new SecretEnvStore(place.secrets, SECRET_FAMILIES.agent, (m) => log.warn(`agent env: ${m}`));
     this.mcpServerEnv = new SecretEnvStore(place.secrets, SECRET_FAMILIES.mcpServer, (m) =>
       log.warn(`MCP server env: ${m}`),
@@ -428,10 +427,7 @@ export class Orchestrator {
         this.agents.noteAuthWireFact(patchbayAgentId, method, settled, startedAt, reason),
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (patchbayAgentId, direction, line) => this.wireLog.frame(patchbayAgentId, direction, line),
-      // Spawn registry: records persist machine-scoped so an abnormal
-      // end (crash, OS kill) leaves exactly what the next activate reaps.
-      onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
-      onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
+      onProcessSpawned: (process) => void this.spawnRegistry.track(process, "agent"),
       onElicitation: async (patchbayAgentId, reading, signal) => {
         if (reading.kind === "invalid") throw RequestError.invalidParams({ reason: reading.why });
         // A question patchbay can't present reaches no one: no user declined
@@ -736,17 +732,7 @@ export class Orchestrator {
       readLive: (path) => this.ports.readTextFileLive(path),
       writeLive: (path, content) => this.ports.writeTextFileLive(path, content),
       emit: (event) => this.agentView.emit(event),
-      trackProcess: (handle) => {
-        if (handle.pid === null) return;
-        const pid = handle.pid;
-        void commandOf(pid).then((cmd) => {
-          // Already exited (fast command) → the record would only be stale.
-          if (cmd !== "" && handle.exitStatus() === null) {
-            void this.spawnRegistry.add(pid, cmd, "terminal");
-          }
-        });
-        handle.onExit(() => void this.spawnRegistry.removePid(pid));
-      },
+      trackProcess: (process) => void this.spawnRegistry.track(process, "terminal"),
     });
 
     void this.refreshAuditTail();
@@ -766,11 +752,11 @@ export class Orchestrator {
     });
     this.publishSessionStats();
 
-    // Orphan reaping strictly before any startup agent spawns: the
-    // registry must be settled before new pids start landing in it. Chips
-    // staged before sessions kept their own files move into them before
-    // any session can read its chips back.
-    void this.reapLeftoverProcesses()
+    // What gone windows left running is ended before this one starts its
+    // own agents. Chips staged before sessions kept their own files move
+    // into them before any session can read its chips back.
+    void this.spawnRegistry
+      .reapLeftovers()
       .then(() =>
         adoptStashedChips(this.sessionContinuity, this.sessionFiles, ATTACHMENTS_DIR).catch(this.logCatch("adopt stashed chips")),
       )
@@ -778,23 +764,6 @@ export class Orchestrator {
       // Settles the view's restore hold no matter how the connects went —
       // the loading page must never outlive the startup sequence.
       .finally(() => this.agentView.emit({ kind: "startupSettled" }));
-  }
-
-  /** Sweeps spawn-registry records left by a session that never ran its
-   * cleanup (crash, OS kill, host death). Kill only what still matches the
-   * recorded command line — a mismatch is a reused pid and is spared, always
-   * the safe direction (process-tree.ts). Every record is spent either way. */
-  private async reapLeftoverProcesses(): Promise<void> {
-    const records = this.spawnRegistry.list();
-    if (records.length === 0) return;
-    const { killed, spared } = await reapOrphans(records);
-    for (const record of records) await this.spawnRegistry.removePid(record.pid);
-    for (const record of killed) {
-      this.log.info(`reaped orphan ${record.kind} process (pid ${record.pid}) from a previous session`);
-    }
-    for (const record of spared) {
-      this.log.debug(`spared pid ${record.pid} — command line changed, pid was reused`);
-    }
   }
 
   /** "Disconnect & erase all data": everything stopped, the erase sweep

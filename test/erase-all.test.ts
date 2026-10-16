@@ -21,6 +21,7 @@ import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { MachineWriteScopeStore } from "../src/orchestrator/stores/write-scope";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
+import { commandOf } from "../src/orchestrator/process-tree";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import { AuthLockStore } from "../src/orchestrator/stores/auth-locks";
@@ -30,7 +31,7 @@ import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import type { PatchbayAgentId } from "../src/shared/ids";
 import type { PatchbayMcpServerId } from "../src/shared/ids";
-import { SECRET_FAMILIES } from "../src/orchestrator/stores/storage-keys";
+import { SECRET_FAMILIES, STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
 
 let dir: string;
 beforeEach(async () => {
@@ -74,7 +75,11 @@ describe("eraseAllData", () => {
     await usedCapabilities.save("claude" as PatchbayAgentId, "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     // A stray from a removed agent — no config left, must still go.
     await usedCapabilities.save("ghost" as PatchbayAgentId, "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
-    await spawnRegistry.add(4242, "node agent.js", "agent");
+    // One of this window's own processes: another window's records stay
+    // its own (spawn-registry.test.ts).
+    const host = { pid: process.pid, command: await commandOf(process.pid) };
+    await globalKv.update(STORAGE_KEYS.spawnRegistry, [{ id: "4242", pid: 4242, command: "node agent.js", kind: "agent", at: "2026-07-21T00:00:00Z", owner: host }]);
+    expect(spawnRegistry.list()).toHaveLength(1);
     await permissionRules.set({ commandRules: [{ pattern: "npm *", verdict: "allow" }], writeScope: [{ location: { kind: "alwaysAsk" }, on: true }] });
     await machineRules.set([{ pattern: "git status", verdict: "allow" }]);
     await machineWriteScope.set([{ location: { kind: "path", path: "/home/me/.hermes" }, on: true }]);

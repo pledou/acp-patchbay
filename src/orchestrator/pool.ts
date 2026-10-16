@@ -47,7 +47,7 @@ import {
 } from "./readers/responses";
 import { readSessionUpdate, type SessionUpdateFact } from "./readers/session-update";
 import { mergeEnv, resolveSpawn } from "./spawn-resolve";
-import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
+import { killTree, trackedChild, type TrackedProcess, treeSpawnOptions } from "./process-tree";
 import type { PatchbayAgentId } from "../shared/ids";
 import { PRODUCT } from "../shared/product";
 
@@ -152,12 +152,9 @@ export interface PoolHooks {
   /** One complete ndjson frame, already line-assembled. Redaction is the
    * receiver's job (wire-log.ts) — pool.ts hands over the raw line. */
   onWireFrame?(patchbayAgentId: PatchbayAgentId, direction: "→" | "←", line: string): void;
-  /** Spawn-registry taps — `onProcessSpawned` fires with the command
-   * line read back from the OS shortly after spawn (skipped when the process
-   * is already gone by then: a record that would only be stale), and
-   * `onProcessEnded` when the exit is observed. */
-  onProcessSpawned?(pid: number, command: string): void;
-  onProcessEnded?(pid: number): void;
+  /** Each agent process as it spawns — for the bookkeeping that outlives
+   * a crash. */
+  onProcessSpawned?(process: TrackedProcess): void;
   /** Patchbay declares fs+terminal unconditionally, so these are
    * required — a declared-but-unhandled method would be exactly the kind of
    * lie bet #2 exists to prevent. Live-buffer reads and pre-gated writes
@@ -420,20 +417,12 @@ export class AgentPool {
       }
     });
 
-    if (child.pid !== undefined) {
-      const pid = child.pid;
-      void commandOf(pid).then((command) => {
-        // Already exited (fast crash) → the record would only be stale.
-        if (command !== "" && child.exitCode === null && child.signalCode === null) {
-          this.hooks.onProcessSpawned?.(pid, command);
-        }
-      });
-    }
+    const tracked = trackedChild(child);
+    if (tracked !== null) this.hooks.onProcessSpawned?.(tracked);
     child.on("error", (err) => {
       this.markDead(entry, `spawn failed: ${err.message}`);
     });
     child.on("exit", (code, signal) => {
-      if (child.pid !== undefined) this.hooks.onProcessEnded?.(child.pid);
       if (entry.stopping) this.setStatus(entry, "stopped");
       else this.markDead(entry, `exited ${code ?? String(signal)} · ${timeOfDay()}`);
     });
