@@ -2,8 +2,11 @@
  * for every wait in the suite. What a test waits on mostly arrives from a
  * subprocess, which a loaded machine (Windows under the full suite) slows
  * several-fold; a wait that runs out fails the test, so the budget is
- * generous and a met condition still returns at once. */
-export const SETTLE = { timeout: 5_000, interval: 10 };
+ * generous and a met condition still returns at once. Scaled for Windows
+ * as the test timeout is: a process starts slowly there, and reading one's
+ * command line is a PowerShell process of its own — about 5 s under the
+ * full suite. */
+export const SETTLE = { timeout: process.platform === "win32" ? 15_000 : 5_000, interval: 10 };
 
 /** The electron suite's budget: what it waits on crosses VS Code's own
  * window — a view mounting, an editor opening, a dialog — which a test
