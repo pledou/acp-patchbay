@@ -8,6 +8,9 @@ import type { CommandRule } from "../src/orchestrator/stores/permission-rules";
 import { SHELL_GRAMMAR } from "./support/shell-grammar";
 
 const reader = new ShellReader(SHELL_GRAMMAR);
+/** A line as bash reads it — the script `bash -c` is handed, which the
+ * reader reads through. */
+const readLine = (text: string) => reader.readRun("bash", ["-c", text]);
 
 const allow = (pattern: string): CommandRule => ({ kind: "command", pattern, verdict: "allow" });
 const ask = (pattern: string): CommandRule => ({ kind: "command", pattern, verdict: "ask" });
@@ -20,7 +23,7 @@ function layers(workspace: CommandRule[], machine: CommandRule[] = []): RuleLaye
 }
 
 async function line(text: string, rules: RuleLayers) {
-  return judgeCommands(await reader.readLine(text), rules);
+  return judgeCommands(await readLine(text), rules);
 }
 
 async function verdict(text: string, rules: RuleLayers) {
@@ -29,7 +32,7 @@ async function verdict(text: string, rules: RuleLayers) {
 
 describe("reading a line — every command it runs", () => {
   it("finds each command in chains, pipelines, loops, subshells, conditions and functions", async () => {
-    const reading = await reader.readLine(
+    const reading = await readLine(
       'a 1 && b 2 || c; d | e\nfor f in x; do g "$f"; done; (h); { i; }; if j; then k; fi; while l; do m; done; case x in y) n;; esac; fn() { o; }',
     );
     expect(reading.commands.map((c) => c.words[0])).toEqual(["a", "b", "c", "d", "e", "g", "h", "i", "j", "k", "l", "m", "n", "o"]);
@@ -37,24 +40,24 @@ describe("reading a line — every command it runs", () => {
   });
 
   it("reads words as the command receives them — quotes gone, boundaries kept", async () => {
-    const [cmd] = (await reader.readLine(`s'u'do rm "a b" c\\ d 'e'"f"`)).commands;
+    const [cmd] = (await readLine(`s'u'do rm "a b" c\\ d 'e'"f"`)).commands;
     expect(cmd!.words).toEqual(["sudo", "rm", "a b", "c d", "ef"]);
     expect(cmd!.text).toBe('sudo rm "a b" "c d" ef');
   });
 
   it("an argument only known when it runs is kept as written — it hides no command", async () => {
-    const reading = await reader.readLine('for f in *.log; do rm "$f" $HOME; done');
+    const reading = await readLine('for f in *.log; do rm "$f" $HOME; done');
     expect(reading.commands).toEqual([{ text: 'rm "$f" $HOME', words: ["rm", '"$f"', "$HOME"] }]);
     expect(reading.unreadable).toEqual([]);
   });
 
   it("assignments and redirects run nothing themselves — the command is its words", async () => {
-    const reading = await reader.readLine("FOO=1 npm test 2>&1 > out.txt | tee log");
+    const reading = await readLine("FOO=1 npm test 2>&1 > out.txt | tee log");
     expect(reading.commands.map((c) => c.text)).toEqual(["npm test", "tee log"]);
   });
 
   it("`export`, `declare` and `unset` are commands named by their keyword", async () => {
-    const reading = await reader.readLine("export WATCH=rm; unset X");
+    const reading = await readLine("export WATCH=rm; unset X");
     expect(reading.commands.map((c) => c.words)).toEqual([["export", "WATCH=rm"], ["unset", "X"]]);
   });
 });
@@ -69,13 +72,13 @@ describe("reading a line — what can't be seen asks", () => {
     ["cat <<EOF\nhi $(whoami)\nEOF", "a command substitution — its output is only known when it runs"],
     ['echo "unterminated', "not bash this reader can follow"],
   ])("%s", async (text, reason) => {
-    const reading = await reader.readLine(text);
+    const reading = await readLine(text);
     expect(reading.unreadable.map((u) => u.reason)).toContain(reason);
     expect(await verdict(text, layers([allow("*")]))).toBe("ask");
   });
 
   it("a quoted heredoc expands nothing — it hides nothing", async () => {
-    const reading = await reader.readLine("cat <<'EOF'\n$(whoami)\nEOF");
+    const reading = await readLine("cat <<'EOF'\n$(whoami)\nEOF");
     expect(reading.unreadable).toEqual([]);
     expect(reading.commands.map((c) => c.text)).toEqual(["cat"]);
   });
@@ -88,7 +91,7 @@ describe("reading through a shell", () => {
   });
 
   it("a shell further along is read through too — the outer command still judged", async () => {
-    const reading = await reader.readLine(`sudo sh -c 'rm -rf /'`);
+    const reading = await readLine(`sudo sh -c 'rm -rf /'`);
     expect(reading.commands.map((c) => c.text)).toEqual(['sudo sh -c "rm -rf /"', "rm -rf /"]);
   });
 
@@ -99,7 +102,7 @@ describe("reading through a shell", () => {
 
   it("a script file is the command itself; `echo bash` is an argument", async () => {
     expect((await reader.readRun("bash", ["deploy.sh"])).commands.map((c) => c.text)).toEqual(["bash deploy.sh"]);
-    expect((await reader.readLine("echo bash")).commands.map((c) => c.text)).toEqual(["echo bash"]);
+    expect((await readLine("echo bash")).commands.map((c) => c.text)).toEqual(["echo bash"]);
   });
 
   it.each([
@@ -114,13 +117,13 @@ describe("reading through a shell", () => {
   });
 
   it("a script only known when it runs asks", async () => {
-    const reading = await reader.readLine('bash -c "$SCRIPT"');
+    const reading = await readLine('bash -c "$SCRIPT"');
     expect(reading.unreadable.map((u) => u.reason)).toEqual(["the script is only known when it runs"]);
   });
 
   it("a grammar that can't load reads every script as unreadable — plain argv needs none", async () => {
     const lost = new ShellReader("/nowhere");
-    expect((await lost.readLine("ls")).unreadable).toEqual([{ text: "ls", reason: "the bash reader didn't load" }]);
+    expect((await lost.readRun("bash", ["-c", "ls"])).unreadable).toEqual([{ text: "ls", reason: "the bash reader didn't load" }]);
     expect((await lost.readRun("npm", ["test"])).commands.map((c) => c.text)).toEqual(["npm test"]);
   });
 

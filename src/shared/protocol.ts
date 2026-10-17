@@ -220,8 +220,9 @@ export type Action =
   | { kind: "removeCommandRule"; rule: Pick<CommandRuleView, "kind" | "pattern">; layer: "workspace" | "machine" }
   /** The Commands page's tester: how the rules would judge `line` — with
    * `draft` among them at its layer, the rule being typed, so its catch
-   * shows before it is added. Answered by `commandJudged`. */
-  | { kind: "testCommand"; line: string; draft: RuleMatchView | null }
+   * shows before it is added. `shell`: what the line runs as (`typedRun`).
+   * Answered by `commandJudged`. */
+  | { kind: "testCommand"; line: string; shell: TesterShell; draft: RuleMatchView | null }
   /** One place's answer at one layer — null: the layer says nothing of it
    * (the workspace follows the machine — or drops a folder only it
    * added; the machine goes back to the default, or drops its folder). */
@@ -2668,6 +2669,11 @@ export type CommandRuleView =
   | { kind: "command"; pattern: string; verdict: "allow" | "ask" | "deny" }
   | { kind: "word"; pattern: string; verdict: "ask" | "deny" };
 
+/** What the Commands page's tester runs a typed line as: the program and
+ * its arguments, no shell between — as `terminal/create` runs — or a
+ * script handed to bash. */
+export type TesterShell = "none" | "bash";
+
 /** A rule and the layer it sits in — one that bore on a command, or the
  * one being typed. */
 export interface RuleMatchView {
@@ -2838,7 +2844,7 @@ export interface SettingsState {
   /** The import under way on the Import/Export page; null when none. */
   configImport: ConfigImportView | null;
   /** The tester's last answer, for the line it judged. */
-  commandTest: { line: string; judgement: CommandJudgementView } | null;
+  commandTest: { line: string; shell: TesterShell; judgement: CommandJudgementView } | null;
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
@@ -2906,7 +2912,7 @@ export type SettingsEvent =
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "configImportChanged"; configImport: ConfigImportView | null }
-  | { kind: "commandJudged"; line: string; judgement: CommandJudgementView }
+  | { kind: "commandJudged"; line: string; shell: TesterShell; judgement: CommandJudgementView }
   | { kind: "sectionChanged"; section: SettingsSectionId };
 
 export function reduceSettings(
@@ -2987,7 +2993,7 @@ export function reduceSettings(
     case "configImportChanged":
       return { ...state, configImport: event.configImport };
     case "commandJudged":
-      return { ...state, commandTest: { line: event.line, judgement: event.judgement } };
+      return { ...state, commandTest: { line: event.line, shell: event.shell, judgement: event.judgement } };
     case "preferencesChanged":
       return { ...state, preferences: event.preferences };
     case "savedRootsChanged":

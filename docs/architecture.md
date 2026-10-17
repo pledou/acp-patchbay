@@ -1231,9 +1231,13 @@ supplies each agent in its own standard — and ACP carries no channel for it
   decides nothing — deny beats ask beats allow. The line takes its most
   severe command's verdict; a part that can't be seen asks, and so does a
   line that runs nothing. A rule matches the command's words; its
-  assignments and redirects ride the trust as cwd and env do. The
-  Commands page's tester asks the same judge (`PermissionBroker.judgeLine`),
-  with the rule being typed counted as added at its layer.
+  assignments and redirects ride the trust as cwd and env do.  The
+  shell that reads a line is only ever known from a program: the one the run
+  starts, a shell the user picks in the Commands page's tester, or — when an
+  agent's request names one — that. The tester turns a typed line into the
+  run the gate would receive (`typedRun`: no shell, or `bash -c`) and judges
+  it with the gate's own judge (`PermissionBroker.judgeRun`), the rule being
+  typed counted as added at its layer.
 - **A rule's verdict on a command shows its card** (decided 2026-10-17,
   #95, closing the gap where a rule's allow or deny reached only the audit
   log): settled by the rule, naming each command that set the verdict and

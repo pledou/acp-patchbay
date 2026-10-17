@@ -78,15 +78,10 @@ export class ShellReader {
   /** `grammarDir` holds `tree-sitter.wasm` and `tree-sitter-bash.wasm`. */
   constructor(private readonly grammarDir: string) {}
 
-  /** A line as a shell would run it. */
-  async readLine(line: string): Promise<ShellReading> {
-    const reading = new Reading(await bashParser(this.grammarDir));
-    reading.script(line);
-    return reading.result();
-  }
-
   /** A program run with its arguments, no shell between — each argument
-   * is one word, whatever it holds. A shell among them is read through. */
+   * is one word, whatever it holds. A shell among them is read through:
+   * which shell reads a line is only ever known from the program that
+   * will run it. */
   async readRun(command: string, args: readonly string[]): Promise<ShellReading> {
     const words = [command, ...args].map((value) => ({ value, literal: true }));
     const reading = new Reading(words.some((w) => isShell(w.value)) ? await bashParser(this.grammarDir) : null);

@@ -69,8 +69,8 @@ function harness() {
   return { broker, asks, roots, rules, machineRules, machineWriteScope, audit, events, opened, refreshCount: () => auditRefreshes };
 }
 
-describe("PermissionBroker.judgeLine", () => {
-  const verdictOf = async (broker: PermissionBroker, line: string) => (await broker.judgeLine(line)).verdict;
+describe("PermissionBroker.judgeRun", () => {
+  const verdictOf = async (broker: PermissionBroker, line: string) => (await broker.judgeRun(run(line))).verdict;
 
   it("returns ask when no rule matches — never a silent allow", async () => {
     const { broker } = harness();
@@ -112,7 +112,7 @@ describe("PermissionBroker.judgeLine", () => {
     const { broker, rules, machineRules } = harness();
     await machineRules.set([allow("npm *")]);
     const draft = { rule: { kind: "word" as const, pattern: "publish", verdict: "deny" as const }, layer: "machine" as const };
-    expect((await broker.judgeLine("npm publish", draft)).commands[0]).toMatchObject({ verdict: "deny", by: draft });
+    expect((await broker.judgeRun(run("npm publish"), draft)).commands[0]).toMatchObject({ verdict: "deny", by: draft });
     expect(machineRules.get().commandRules).toEqual([allow("npm *")]);
     expect(rules.get().commandRules).toEqual([]);
   });
@@ -499,8 +499,8 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
     asks.answerOption(asked.patchbayAskId, "allow_always");
     await pending;
     expect(rules.get().commandRules).toEqual([allow('rm "a b"')]);
-    expect((await broker.judgeLine('rm "a b"')).verdict).toBe("allow");
-    expect((await broker.judgeLine("rm a b")).verdict).toBe("ask");
+    expect((await broker.judgeRun(run('rm "a b"'))).verdict).toBe("allow");
+    expect((await broker.judgeRun(run("rm a b"))).verdict).toBe("ask");
   });
 
   it("a rule speaks for the command line alone — its directory and environment ride the trust", async () => {

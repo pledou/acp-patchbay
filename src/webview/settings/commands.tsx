@@ -8,7 +8,7 @@
 // verb per page, one subject per rules page.
 import { type ReactNode, useEffect, useState } from "react";
 import { matchLabel, ruleLabel } from "../../shared/command-rules";
-import type { CommandJudgementView, CommandRuleView, RuleMatchView, SettingsState } from "../../shared/protocol";
+import type { CommandJudgementView, CommandRuleView, RuleMatchView, SettingsState, TesterShell } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
 import { ruleCounts, sortedRules } from "./command-rules-view";
 import { Button } from "@/components/ui/button";
@@ -244,19 +244,21 @@ export function CommandsSection(props: {
   state: SettingsState;
   onAddRule(rule: CommandRuleView, layer: Layer): void;
   onRemoveRule(rule: CommandRuleView, layer: Layer): void;
-  onTest(line: string, draft: Draft | null): void;
+  onTest(line: string, shell: TesterShell, draft: Draft | null): void;
 }) {
   const { state, onTest } = props;
   const [line, setLine] = useState("");
+  const [shell, setShell] = useState<TesterShell>("none");
   const [draft, setDraft] = useState<Draft | null>(null);
   const draftFrom = (layer: Layer) => (rule: CommandRuleView | null) =>
     setDraft((held) => (rule !== null ? { rule, layer } : held?.layer === layer ? null : held));
   // Asked again whenever the line, the draft or the rules change — the
   // answer shown is always for what is on the page now.
   useEffect(() => {
-    if (line.trim() !== "") onTest(line, draft);
-  }, [line, draft, state.commandRules, state.machineCommandRules]);
-  const result = state.commandTest !== null && state.commandTest.line === line ? state.commandTest.judgement : null;
+    if (line.trim() !== "") onTest(line, shell, draft);
+  }, [line, shell, draft, state.commandRules, state.machineCommandRules]);
+  const shown = state.commandTest;
+  const result = shown !== null && shown.line === line && shown.shell === shell ? shown.judgement : null;
 
   return (
     <section className="section">
@@ -273,16 +275,28 @@ export function CommandsSection(props: {
       <div className="card">
         <h2 className="mt-0">Test a command</h2>
         <div className="note mx-0 mt-0 mb-2">
-          How the rules of both layers would judge a line — with the rule being typed below counted
-          as added.
+          As the gate would judge it, the rule being typed below counted as added. No shell: a
+          program and its arguments; bash: a script.
         </div>
-        <Input
-          type="text"
-          placeholder="kubectl get pods --watch && rm -rf build"
-          value={line}
-          aria-label="Command to test"
-          onInput={(e) => setLine((e.target as HTMLInputElement).value)}
-        />
+        <div className="row">
+          <Select value={shell} onValueChange={(v) => setShell(v as TesterShell)}>
+            <SelectTrigger aria-label="Run as">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No shell</SelectItem>
+              <SelectItem value="bash">bash</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            type="text"
+            className="flex-1"
+            placeholder={shell === "bash" ? "kubectl get pods --watch && rm -rf build" : "npm run build"}
+            value={line}
+            aria-label="Command to test"
+            onInput={(e) => setLine((e.target as HTMLInputElement).value)}
+          />
+        </div>
         {result !== null && (
           <div className="mt-2">
             <JudgementView judgement={result} draft={draft} />

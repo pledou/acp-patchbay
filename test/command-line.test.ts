@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCommandLine, parseCommandLine } from "../src/shared/command-line";
+import { formatCommandLine, parseCommandLine, typedRun } from "../src/shared/command-line";
 
 describe("parseCommandLine", () => {
   it("splits command and args", () => {
@@ -46,5 +46,13 @@ describe("formatCommandLine — the inverse of parseCommandLine", () => {
       command: "/opt/my tool/bin",
       args: shapes,
     });
+  });
+});
+
+describe("typedRun — what a typed line runs as", () => {
+  it("with no shell, the program and its arguments; under bash, the script bash -c is handed", () => {
+    expect(typedRun('rm "a b" && x', "none")).toEqual({ command: "rm", args: ["a b", "&&", "x"] });
+    expect(typedRun('rm "a b" && x', "bash")).toEqual({ command: "bash", args: ["-c", 'rm "a b" && x'] });
+    expect(typedRun('rm "a', "none")).toBeNull();
   });
 });

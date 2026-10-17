@@ -128,13 +128,13 @@ export class PermissionBroker {
     private readonly currentText: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
   ) {}
 
-  /** A line as a shell would run it, judged by the rules — with `draft`
+  /** A run judged by the rules, as the gate judges one — with `draft`
    * among them, at its layer, when one is given: what a rule would catch
    * before it is added. */
-  async judgeLine(line: string, draft?: RuleMatchView): Promise<CommandJudgementView> {
+  async judgeRun(run: { command: string; args: readonly string[] }, draft?: RuleMatchView): Promise<CommandJudgementView> {
     const layers = this.layers();
     if (draft !== undefined) layers[draft.layer] = withRule(layers[draft.layer], draft.rule);
-    return judgeCommands(await this.reader.readLine(line), layers);
+    return judgeCommands(await this.reader.readRun(run.command, run.args), layers);
   }
 
   private layers(): { -readonly [L in keyof RuleLayers]: readonly CommandRule[] } {
@@ -310,7 +310,7 @@ export class PermissionBroker {
     // The place is held before the line is read: a turn stopped meanwhile
     // answers this command too, before any card was shown.
     const { id, ending } = this.asks.open({ patchbaySessionId }, "command", { command, cwd: run.cwd, env: Object.keys(run.env) });
-    const judgement = judgeCommands(await this.reader.readRun(run.command, run.args), this.layers());
+    const judgement = await this.judgeRun(run);
     const always = judgement.verdict === "ask" ? alwaysRules(judgement) : null;
     // The card shows either way — a rule changes who answers, never what is
     // visible — and a rule's answer settles it at once, naming the rule.

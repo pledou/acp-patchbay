@@ -23,17 +23,21 @@ import {
   type Action,
   type AgentViewEvent,
   type AgentViewState,
+  type CommandJudgementView,
   type ConnectAgentSource,
   type DataInventoryRow,
   type ElicitationAnswer,
+  type RuleMatchView,
   type SavedRootScope,
   type SavedRootsView,
   type SettingsEvent,
   type SettingsSectionId,
   type SettingsState,
+  type TesterShell,
   type WriteLocation,
   type WriteScopeView,
 } from "../shared/protocol";
+import { typedRun } from "../shared/command-line";
 import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, endQuestion, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
@@ -1288,6 +1292,17 @@ export class Orchestrator {
 
   private writeScopeView(): WriteScopeView {
     return { rows: writeScopeRows(this.machineWriteScope.get(), this.permissionRules.get().writeScope), tempDir: tmpdir() };
+  }
+
+  /** The Commands page's tester: how the gate would judge `line` run as
+   * `shell`, with `draft` counted as added — told to Settings. */
+  async testCommand(line: string, shell: TesterShell, draft: RuleMatchView | null): Promise<void> {
+    const run = typedRun(line, shell);
+    const judgement: CommandJudgementView =
+      run === null
+        ? { verdict: "ask", commands: [], unreadable: [{ text: line, reason: "not a command line — a quote is left open" }] }
+        : await this.broker.judgeRun(run, draft ?? undefined);
+    this.settings.emit({ kind: "commandJudged", line, shell, judgement });
   }
 
   /** One layer's command rules, changed through that layer's store, then

@@ -182,7 +182,7 @@ export function App({ state }: { state: SettingsState }) {
             state={state}
             onAddRule={(rule, layer) => send({ kind: "addCommandRule", rule, layer })}
             onRemoveRule={(rule, layer) => send({ kind: "removeCommandRule", rule, layer })}
-            onTest={(line, draft) => send({ kind: "testCommand", line, draft })}
+            onTest={(line, shell, draft) => send({ kind: "testCommand", line, shell, draft })}
           />
         )}
         {section === "audit" && (

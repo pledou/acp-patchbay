@@ -1817,7 +1817,7 @@ for (const theme of Object.keys(THEMES)) {
       .catch(() => null);
     check(
       `[commands ${width}px] the tester asks with the rule being typed as its draft`,
-      asked?.line === line && asked?.draft?.layer === "workspace" && asked?.draft?.rule?.pattern === "kubectl get *",
+      asked?.line === line && asked?.shell === "none" && asked?.draft?.layer === "workspace" && asked?.draft?.rule?.pattern === "kubectl get *",
     );
     const draft = { rule: { kind: "command", pattern: "kubectl get *", verdict: "allow" }, layer: "workspace" };
     await p.evaluate(
@@ -1826,6 +1826,7 @@ for (const theme of Object.keys(THEMES)) {
           {
             kind: "commandJudged",
             line: l,
+            shell: "none",
             judgement: {
               verdict: "deny",
               commands: [

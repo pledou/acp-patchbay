@@ -5,6 +5,8 @@
 // writing (`formatCommandLine`), each the other's inverse. Double and single
 // quotes, no escapes, no shell interpretation — commands spawn without one,
 // so an argument's boundaries are real and the text must keep them.
+import type { TesterShell } from "./protocol";
+
 export function parseCommandLine(
   input: string,
 ): { command: string; args: string[] } | null {
@@ -36,6 +38,14 @@ export function parseCommandLine(
   const [command, ...args] = tokens;
   if (!command) return null;
   return { command, args };
+}
+
+/** What a typed line runs as, the way the Commands page's tester takes it:
+ * with no shell, the line is the program and its arguments, read as a
+ * command line is (null when it isn't one — a quote left open, nothing
+ * typed); under bash, the line is the script `bash -c` is handed. */
+export function typedRun(line: string, shell: TesterShell): { command: string; args: string[] } | null {
+  return shell === "bash" ? { command: "bash", args: ["-c", line] } : parseCommandLine(line);
 }
 
 /** The command line a person reads — and `parseCommandLine` reads back to
