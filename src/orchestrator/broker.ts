@@ -32,6 +32,7 @@ import type {
   PermissionCallView,
   PermissionFact,
   PermissionOptionView,
+  RuleMatchView,
 } from "../shared/protocol";
 import type { AskPlace, AsksStore, LinkCompletion, Proposal } from "./asks-store";
 import { judgeCommands, type RuleLayers } from "./command-judge";
@@ -130,7 +131,7 @@ export class PermissionBroker {
   /** A line as a shell would run it, judged by the rules — with `draft`
    * among them, at its layer, when one is given: what a rule would catch
    * before it is added. */
-  async judgeLine(line: string, draft?: { rule: CommandRule; layer: "workspace" | "machine" }): Promise<CommandJudgementView> {
+  async judgeLine(line: string, draft?: RuleMatchView): Promise<CommandJudgementView> {
     const layers = this.layers();
     if (draft !== undefined) layers[draft.layer] = withRule(layers[draft.layer], draft.rule);
     return judgeCommands(await this.reader.readLine(line), layers);

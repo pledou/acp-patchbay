@@ -15,8 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-type Layer = "workspace" | "machine";
-type Draft = { rule: CommandRuleView; layer: Layer };
+type Layer = RuleMatchView["layer"];
+/** The rule being typed in an add row, at that card's layer. */
+type Draft = RuleMatchView;
 
 const EXAMPLE: Readonly<Record<CommandRuleView["kind"], string>> = { command: "kubectl get *", word: "sudo" };
 const COLUMNS = ["deny", "ask", "allow", "total"] as const;

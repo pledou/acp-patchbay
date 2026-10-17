@@ -221,7 +221,7 @@ export type Action =
   /** The Commands page's tester: how the rules would judge `line` — with
    * `draft` among them at its layer, the rule being typed, so its catch
    * shows before it is added. Answered by `commandJudged`. */
-  | { kind: "testCommand"; line: string; draft: { rule: CommandRuleView; layer: "workspace" | "machine" } | null }
+  | { kind: "testCommand"; line: string; draft: RuleMatchView | null }
   /** One place's answer at one layer — null: the layer says nothing of it
    * (the workspace follows the machine — or drops a folder only it
    * added; the machine goes back to the default, or drops its folder). */
@@ -2668,7 +2668,8 @@ export type CommandRuleView =
   | { kind: "command"; pattern: string; verdict: "allow" | "ask" | "deny" }
   | { kind: "word"; pattern: string; verdict: "ask" | "deny" };
 
-/** A rule as it bore on a command, and the layer it sits in. */
+/** A rule and the layer it sits in — one that bore on a command, or the
+ * one being typed. */
 export interface RuleMatchView {
   rule: CommandRuleView;
   layer: "workspace" | "machine";
