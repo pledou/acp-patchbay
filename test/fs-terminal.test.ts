@@ -16,6 +16,7 @@ import { tailBytes } from "../src/orchestrator/terminal-runner";
 import type { OrchestratorPorts } from "../src/orchestrator/orchestrator";
 import type { AgentViewState } from "../src/shared/protocol";
 import { orchestratorHarness } from "./support/orchestrator-harness";
+import { standIn } from "./support/stand-in";
 import type { FakeAgentScript } from "./fake-agent/main";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
@@ -659,6 +660,71 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     expect(events().slice(before)).toEqual([]);
   });
 
+  // #116: on Windows a tool is most often a .cmd shim (npm, npx, tsc) — a
+  // shell-less spawn finds only .exe, and refuses a .cmd outright.
+  it("a tool that is a .cmd shim on Windows runs — named in full, or by its bare name on PATH", async () => {
+    const h = harness();
+    await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
+    const bin = join(dir, "bin");
+    await mkdir(bin);
+    const tool = await standIn(bin, "pb-tool", "console.log('tool ran with ' + process.argv.slice(2).join('|'));");
+    const S = "s" as PatchbaySessionId;
+    for (const [command, env] of [
+      [tool, {}],
+      ["pb-tool", { PATH: bin }],
+    ] as const) {
+      const { terminalId } = await h.host.createTerminal({ sessionId: "s", command, args: ["a", "b"], env }, { id: S, cwd: workspaceRoot });
+      const ref = { sessionId: "s", terminalId };
+      expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: 0, signal: null });
+      expect((await h.host.terminalOutput(S, ref)).output).toContain("tool ran with a|b");
+    }
+  });
+
+  // Windows looks for a bare name in the spawn's own directory before PATH:
+  // an opened repo carrying `git.exe` (or `git.cmd`) at its root would run
+  // in place of the real one, under whatever rule trusts `git`.
+  it("a bare name runs the program PATH names — never one planted in the command's directory", async () => {
+    const h = harness();
+    await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
+    const bin = join(dir, "real-bin");
+    await mkdir(bin);
+    await standIn(bin, "pb-shadow", "console.log('the real one');");
+    await standIn(workspaceRoot, "pb-shadow", "console.log('PLANTED');");
+    const S = "s" as PatchbaySessionId;
+    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: "pb-shadow", args: [], env: { PATH: bin } }, { id: S, cwd: workspaceRoot });
+    const ref = { sessionId: "s", terminalId };
+    await h.host.waitForTerminalExit(S, ref);
+    const { output } = await h.host.terminalOutput(S, ref);
+    expect(output).toContain("the real one");
+    expect(output).not.toContain("PLANTED");
+  });
+
+  it("an argument a Windows shell would act on never reaches one: refused there with the reason, passed as given elsewhere", async () => {
+    const h = harness();
+    await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
+    const tool = await standIn(dir, "pb-echo", "console.log('got ' + process.argv[2]);");
+    const S = "s" as PatchbaySessionId;
+    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: tool, args: ["x & del y"], env: {} }, { id: S, cwd: workspaceRoot });
+    const ref = { sessionId: "s", terminalId };
+    const expected =
+      process.platform === "win32"
+        ? { exit: { exitCode: null, signal: null }, says: "is shell-active" }
+        : { exit: { exitCode: 0, signal: null }, says: "got x & del y" };
+    expect(await h.host.waitForTerminalExit(S, ref)).toEqual(expected.exit);
+    expect((await h.host.terminalOutput(S, ref)).output).toContain(expected.says);
+  });
+
+  it("a command the system won't even take says why in its own output — never an internal error", async () => {
+    const h = harness();
+    await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
+    const S = "s" as PatchbaySessionId;
+    // A NUL in a program's name is refused before any process exists.
+    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: "bad\0name", args: [], env: {} }, { id: S, cwd: workspaceRoot });
+    const ref = { sessionId: "s", terminalId };
+    expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: null, signal: null });
+    expect((await h.host.terminalOutput(S, ref)).output).not.toBe("");
+  });
+
   it("a command that never starts says why in its own output, and terminal ids never repeat (#80)", async () => {
     const h = harness();
     await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
@@ -668,7 +734,8 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     const { terminalId } = await create();
     const ref = { sessionId: "s", terminalId };
     expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: null, signal: null });
-    expect((await h.host.terminalOutput(S, ref)).output).toMatch(/ENOENT/);
+    // Elsewhere the system says so; on Windows the PATHEXT walk does first.
+    expect((await h.host.terminalOutput(S, ref)).output).toMatch(/ENOENT|does not exist/);
     const again = await create();
     expect(again.terminalId).not.toBe(terminalId);
     expect(terminalId).toMatch(/^term-[0-9a-f-]{36}$/);

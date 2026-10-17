@@ -3,14 +3,15 @@
 
 // Windows-safe command resolution — THE one spelling of "this configured
 // command becomes that spawned executable", shared by the agent launch,
-// the launcher warmup, and every version probe. POSIX passes through
+// the launcher warmup, every version probe, and the terminal commands an
+// agent runs. POSIX passes through
 // untouched: execvp searches PATH only, never the working directory.
 // Windows is where resolution bites, three ways at once:
 //
 // 1. **CWD planting.** cmd.exe resolves an unqualified name against the
-//    current directory before PATH, and agent spawns run in the workspace
-//    root — an opened repo carrying `npx.cmd` at its top level would run
-//    on connect. Resolving to an absolute path up front means no lookup
+//    current directory before PATH, and agent spawns and terminals run in
+//    the workspace — an opened repo carrying `npx.cmd` or `git.exe` at its
+//    top level would run on connect, or under a rule that trusts `git`. Resolving to an absolute path up front means no lookup
 //    ever happens in the spawn's cwd: PATH entries are walked here, and
 //    relative or "." entries are skipped (they would re-admit the cwd by
 //    the back door).

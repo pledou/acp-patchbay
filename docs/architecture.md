@@ -1015,6 +1015,15 @@ The differentiator (the PRD's current-release scope), shipped complete:
   env still can
   (`NODE_OPTIONS=--import=data:…` needs no file) — the rule is the user's own,
   and an unruled command always asks. The audit records env names, never values.
+  The run is resolved as an agent's launch is (`spawn-resolve.ts`, decided
+  2026-10-17, #116): on Windows a bare name is found through PATH × PATHEXT —
+  never in the command's own directory, where an opened repo could plant a
+  `git.exe` — and a `.cmd`/`.bat` runs through cmd.exe only when no argument
+  is one cmd would act on, so what runs is exactly the program and arguments
+  the rules judged; an argument cmd would act on is refused, said in the
+  terminal's own output. Every way a command fails to start — refused, or
+  rejected by the system on the spot — ends as that output, never as an
+  error to the agent's request.
   A command that names no cwd runs in its session's — the cwd the pool sent when
   that connection opened the session, the directory the agent was told it works
   in; a relative cwd (the spec requires absolute) or a session the connection

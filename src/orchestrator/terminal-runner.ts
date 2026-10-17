@@ -5,9 +5,9 @@
 // it's testable against the fake agent without a real extension host) —
 // visibility in a real VS Code terminal is a thin wrapper layered on top in
 // the extension host (orchestrator-host.ts), not this module's concern.
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { killTree, trackedChild, type TrackedProcess, treeSpawnOptions } from "./process-tree";
-import { mergeEnv } from "./spawn-resolve";
+import { mergeEnv, resolveSpawn } from "./spawn-resolve";
 
 export interface ExitStatus {
   exitCode: number | null;
@@ -70,16 +70,6 @@ export class NodeTerminalRunner implements TerminalRunner {
     const exitListeners = new Set<(status: ExitStatus) => void>();
     const exitWaiters: Array<(status: ExitStatus) => void> = [];
 
-    const child = spawn(params.command, params.args, {
-      cwd: params.cwd,
-      env: mergeEnv(process.env, params.env),
-      stdio: ["ignore", "pipe", "pipe"],
-      // Group leader on POSIX (process-tree.ts): terminal/kill must end the
-      // whole tree — build tools fork, and ACP's contract is "the command
-      // stops", not "its top process stops".
-      ...treeSpawnOptions,
-    });
-
     const append = (chunk: string) => {
       output += chunk;
       const tail = tailBytes(output, limit);
@@ -89,37 +79,71 @@ export class NodeTerminalRunner implements TerminalRunner {
       }
       for (const listener of dataListeners) listener(chunk);
     };
-    child.stdout!.setEncoding("utf8").on("data", append);
-    child.stderr!.setEncoding("utf8").on("data", append);
-
     const finish = (status: ExitStatus) => {
       if (exited !== null) return;
       exited = status;
       for (const listener of exitListeners) listener(status);
       for (const waiter of exitWaiters.splice(0)) waiter(status);
     };
-    child.on("exit", (code, signal) => finish({ exitCode: code, signal }));
     // A command that never started says why in its own output — what the
-    // agent reads back and the transcript shows, never a bare "exit ?".
-    child.on("error", (err) => {
-      append(`${err.message}\n`);
+    // agent reads back and the transcript shows, never a bare "exit ?" and
+    // never an error to the agent's request. However it failed: the
+    // resolver refused it, the system refused it on the spot, or it failed
+    // to start after.
+    const neverStarted = (reason: string) => {
+      append(`${reason}\n`);
       finish({ exitCode: null, signal: null });
-    });
+    };
+
+    // Resolved as an agent's own launch is: on Windows a bare name is found
+    // through PATH × PATHEXT, and a .cmd/.bat runs through cmd.exe only
+    // when no argument is one cmd would act on — so what runs is exactly
+    // the program and arguments the rules judged.
+    const env = mergeEnv(process.env, params.env);
+    const launch = resolveSpawn(params.command, params.args, env);
+    let child: ChildProcess | null = null;
+    try {
+      if (launch.error !== undefined) throw new Error(launch.error);
+      child = spawn(launch.command, launch.args, {
+        cwd: params.cwd,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: launch.shell,
+        // Group leader on POSIX (process-tree.ts): terminal/kill must end the
+        // whole tree — build tools fork, and ACP's contract is "the command
+        // stops", not "its top process stops".
+        ...treeSpawnOptions,
+      });
+    } catch (err) {
+      // Told once its caller is listening, as a failure after the spawn is.
+      const reason = err instanceof Error ? err.message : String(err);
+      queueMicrotask(() => neverStarted(reason));
+    }
+    if (child !== null) {
+      child.stdout!.setEncoding("utf8").on("data", append);
+      child.stderr!.setEncoding("utf8").on("data", append);
+      child.on("exit", (code, signal) => finish({ exitCode: code, signal }));
+      child.on("error", (err) => neverStarted(err.message));
+    }
+    const started = child;
 
     return {
-      process: trackedChild(child),
+      process: started === null ? null : trackedChild(started),
       currentOutput: () => ({ output, truncated }),
       exitStatus: () => exited,
       waitForExit: () =>
         exited !== null ? Promise.resolve(exited) : new Promise((resolve) => exitWaiters.push(resolve)),
       kill: () => {
-        killTree(child, "SIGTERM");
+        if (started === null) return;
+        killTree(started, "SIGTERM");
         // Escalation for trees that ignore SIGTERM; unref'd — never holds
         // the host open. A tree that ended meanwhile is no longer this
         // host's to kill by its pid; killTree reaches only what is.
-        setTimeout(() => killTree(child, "SIGKILL"), 2_000).unref();
+        setTimeout(() => killTree(started, "SIGKILL"), 2_000).unref();
       },
-      killNow: () => killTree(child, "SIGKILL"),
+      killNow: () => {
+        if (started !== null) killTree(started, "SIGKILL");
+      },
       onData: (listener) => {
         dataListeners.add(listener);
         return () => dataListeners.delete(listener);
