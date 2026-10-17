@@ -245,6 +245,10 @@ deliverable.
   rules were added in decides nothing, and a line whose commands can't be
   seen from its text asks. A rule's decision shows its card, settled, naming
   the rule.
+- User can test a command line against the rules before an agent runs it:
+  which rules matched, which one decided each command, and the line's verdict —
+  with a rule being typed counted as added. Each rule list shows how many rules
+  of each kind deny, ask and allow.
 - File writes are approved without asking in the places the user picks: the
   workspace (on by default), the roots added to a session, the temp dir, and
   any folder they add — each set for this machine and, where one project needs it

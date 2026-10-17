@@ -218,6 +218,10 @@ export type Action =
    * every workspace, the fallback floor). */
   | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
   | { kind: "removeCommandRule"; rule: Pick<CommandRuleView, "kind" | "pattern">; layer: "workspace" | "machine" }
+  /** The Commands page's tester: how the rules would judge `line` — with
+   * `draft` among them at its layer, the rule being typed, so its catch
+   * shows before it is added. Answered by `commandJudged`. */
+  | { kind: "testCommand"; line: string; draft: { rule: CommandRuleView; layer: "workspace" | "machine" } | null }
   /** One place's answer at one layer — null: the layer says nothing of it
    * (the workspace follows the machine — or drops a folder only it
    * added; the machine goes back to the default, or drops its folder). */
@@ -2832,6 +2836,8 @@ export interface SettingsState {
   savedRoots: SavedRootsView;
   /** The import under way on the Import/Export page; null when none. */
   configImport: ConfigImportView | null;
+  /** The tester's last answer, for the line it judged. */
+  commandTest: { line: string; judgement: CommandJudgementView } | null;
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
@@ -2865,6 +2871,7 @@ export const initialSettingsState: SettingsState = {
   wireLog: { active: false, until: null },
   dataInventory: null,
   configImport: null,
+  commandTest: null,
   preferences: DEFAULT_PREFERENCES,
   doneSounds: [],
   savedRoots: NO_SAVED_ROOTS,
@@ -2898,6 +2905,7 @@ export type SettingsEvent =
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "configImportChanged"; configImport: ConfigImportView | null }
+  | { kind: "commandJudged"; line: string; judgement: CommandJudgementView }
   | { kind: "sectionChanged"; section: SettingsSectionId };
 
 export function reduceSettings(
@@ -2977,6 +2985,8 @@ export function reduceSettings(
       return { ...state, dataInventory: event.rows };
     case "configImportChanged":
       return { ...state, configImport: event.configImport };
+    case "commandJudged":
+      return { ...state, commandTest: { line: event.line, judgement: event.judgement } };
     case "preferencesChanged":
       return { ...state, preferences: event.preferences };
     case "savedRootsChanged":
@@ -3001,6 +3011,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "wireLogChanged",
   "dataInventoryChanged",
   "configImportChanged",
+  "commandJudged",
   "sectionChanged",
 ]);
 

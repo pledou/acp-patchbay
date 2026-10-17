@@ -895,6 +895,12 @@ export class OrchestratorHost {
       case "removeCommandRule":
         void this.orchestrator.setCommandRules(action.layer, (rules) => rules.filter((r) => !sameRule(r, action.rule)));
         break;
+      case "testCommand":
+        void this.orchestrator.broker
+          .judgeLine(action.line, action.draft ?? undefined)
+          .then((judgement) => this.orchestrator.settings.emit({ kind: "commandJudged", line: action.line, judgement }))
+          .catch(this.orchestrator.logCatch("testCommand"));
+        break;
       case "setWriteLocation":
         void this.orchestrator.setWriteLocation(action.location, action.layer, action.on).then(() => this.orchestrator.publishRules());
         break;

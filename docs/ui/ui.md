@@ -446,17 +446,36 @@ repo; a cloned repository cannot arrive pre-authorized.**
 
 ### Commands
 
-Rules for the terminal commands an agent runs through patchbay; the intro says an
-agent's own permission requests carry no command line a rule could match, so those
-always ask. Command rules in **two layers**, one card each, identical shape
-(`pattern → allow / ask / deny` + add row, and a note that an allow rule trusts the
-command itself — the cwd and env the agent runs it with ride along): *this
-workspace* (evaluated first — the repo's own tightening or loosening) and *this
-machine* (the fallback floor for every workspace — consulted only where the
-workspace layer stays silent; no rule anywhere means ask). Each list is bounded at
-about ten rows and scrolls within itself: a list grows with every "Always allow",
-and hundreds of rules must not push the card after it, or its own add row, out of
-reach (#103). The placement statement in green, as on Edits.
+Rules for the terminal commands an agent runs through patchbay; the intro says each
+command in a line is judged and the line takes the most severe verdict, that within
+a layer deny beats ask beats allow, and that an agent's own permission requests
+carry no command a rule could match, so those always ask (decided 2026-10-17, #95
+#104).
+
+First, **Test a command**: a line in, and how the rules of both layers judge it —
+each command it runs with its verdict, the rule that decided it (with its layer, or
+"no rule matched") and the rules that matched and lost; each part that can't be
+seen, with why; the line's verdict. The rule being typed in either card's add row
+counts as added, marked "being typed", so a rule's catch shows before it is saved.
+The orchestrator judges (the same judge as the gate and the cards); the page only
+asks and renders the answer for the line on screen.
+
+Command rules in **two layers**, one card each, identical shape: *this workspace*
+(evaluated first — the repo's own tightening or loosening) and *this machine* (the
+fallback floor for every workspace — consulted only where the workspace layer stays
+silent; no rule anywhere means ask). Each card opens on its counts — a grid of kind
+(command, word, total) × verdict (deny, ask, allow, total; a word never allows) —
+then the list, deny first, then ask, then allow, by pattern within each: the order
+rules were added in decides nothing, so the list doesn't pretend it does. A row is
+verdict, kind, pattern, ×. The add row: kind (Command | Word), pattern (the example
+follows the kind: `kubectl get *`, `sudo`), verdict — a word offers only deny and
+ask, and takes no spaces — then Add rule; the note under it says what the kind
+matches (a word: one word wherever it sits; a command pattern: one command's whole
+text, an allow trusting the command itself — the cwd and env the agent runs it with
+ride along). Each list is bounded at about eight rows and scrolls within itself: a
+list grows with every "Always allow", and hundreds of rules must not push the card
+after it, or its own add row, out of reach (#103). The placement statement in
+green, as on Edits.
 
 ### Audit
 

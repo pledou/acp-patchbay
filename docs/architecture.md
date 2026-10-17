@@ -1231,7 +1231,9 @@ supplies each agent in its own standard — and ACP carries no channel for it
   decides nothing — deny beats ask beats allow. The line takes its most
   severe command's verdict; a part that can't be seen asks, and so does a
   line that runs nothing. A rule matches the command's words; its
-  assignments and redirects ride the trust as cwd and env do.
+  assignments and redirects ride the trust as cwd and env do. The
+  Commands page's tester asks the same judge (`PermissionBroker.judgeLine`),
+  with the rule being typed counted as added at its layer.
 - **A rule's verdict on a command shows its card** (decided 2026-10-17,
   #95, closing the gap where a rule's allow or deny reached only the audit
   log): settled by the rule, naming each command that set the verdict and

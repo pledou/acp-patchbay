@@ -1558,7 +1558,7 @@ for (const theme of Object.keys(THEMES)) {
   const st = settingsState();
   st.agents = st.agents.map((a) => ({ ...a, name: `${a.name} ${LONG}`, command: longPath }));
   st.agentConfigs = st.agentConfigs.map((c) => ({ ...c, name: `${c.name} ${LONG}`, command: longPath }));
-  st.commandRules = [{ pattern: `npm run ${LONG}`, verdict: "allow" }];
+  st.commandRules = [{ kind: "command", pattern: `npm run ${LONG}`, verdict: "allow" }];
   st.savedRoots = { workspace: [longPath], machine: [`/srv/${LONG}`], missing: [] };
   p = await page(browser, theme0, { width: 520, height: 800 });
   await renderView(p, "settings", st);
@@ -1773,7 +1773,10 @@ for (const theme of Object.keys(THEMES)) {
   // the machine card after them, and the list's own add row, stay in reach ──
   const many = settingsState();
   many.section = "commands";
-  many.commandRules = Array.from({ length: 341 }, (_, i) => ({ pattern: `tool-${i} *`, verdict: "allow" }));
+  many.commandRules = [
+    ...Array.from({ length: 330 }, (_, i) => ({ kind: "command", pattern: `tool-${i} *`, verdict: "allow" })),
+    ...Array.from({ length: 11 }, (_, i) => ({ kind: "word", pattern: `word-${i}`, verdict: i % 2 === 0 ? "deny" : "ask" })),
+  ];
   p = await page(browser, theme0, { width: 900, height: 900 });
   await renderView(p, "settings", many);
   await p.waitForSelector("[data-rule-list]");
@@ -1785,8 +1788,67 @@ for (const theme of Object.keys(THEMES)) {
     (await p.locator("[data-rule-list]").first().evaluate((el) => el.scrollHeight > el.clientHeight)) &&
       (await p.locator("[data-rule-list]").first().locator(".rule").count()) === 341,
   );
+  check(
+    "[commands] the counts read the list: 341 rules, 11 of them words, none allowing",
+    /total\s*6\s*5\s*330\s*341/.test(await p.locator("[data-rule-counts]").first().innerText()) &&
+      /word\s*6\s*5\s*—\s*11/.test(await p.locator("[data-rule-counts]").first().innerText()),
+  );
+  check(
+    "[commands] the list leads with what wins: deny, then ask, then allow",
+    (await p.locator("[data-rule-list]").first().locator(".rule .verdict").first().innerText()) === "deny",
+  );
   await p.screenshot({ path: `${OUT}/settings-commands-long.png` });
   await p.close();
+
+  // ── Commands tester (#95, #104): a line is asked about with the rule being
+  // typed as its draft, and the answer reads command by command ──
+  for (const width of [900, 520]) {
+    const tester = settingsState();
+    tester.section = "commands";
+    p = await page(browser, theme0, { width, height: 900 });
+    await renderView(p, "settings", tester);
+    await p.waitForSelector('[aria-label="Command to test"]');
+    const line = `kubectl get pods --watch && rm -rf build && echo $(id) ${LONG}`;
+    await p.fill('[aria-label="Command to test"]', line);
+    await p.locator('input[placeholder="kubectl get *"]').first().fill("kubectl get *");
+    const asked = await p
+      .waitForFunction(() => window.__actions.filter((a) => a.kind === "testCommand").find((a) => a.draft !== null), null, { timeout: 3000 })
+      .then((h) => h.jsonValue())
+      .catch(() => null);
+    check(
+      `[commands ${width}px] the tester asks with the rule being typed as its draft`,
+      asked?.line === line && asked?.draft?.layer === "workspace" && asked?.draft?.rule?.pattern === "kubectl get *",
+    );
+    const draft = { rule: { kind: "command", pattern: "kubectl get *", verdict: "allow" }, layer: "workspace" };
+    await p.evaluate(
+      ([l, d]) =>
+        window.__patch([
+          {
+            kind: "commandJudged",
+            line: l,
+            judgement: {
+              verdict: "deny",
+              commands: [
+                { text: "kubectl get pods --watch", verdict: "deny", by: { rule: { kind: "word", pattern: "--watch", verdict: "deny" }, layer: "machine" }, also: [d] },
+                { text: "rm -rf build", verdict: "ask", by: null, also: [] },
+              ],
+              unreadable: [{ text: "$(id)", reason: "a command substitution — its output is only known when it runs" }],
+            },
+          },
+        ]),
+      [line, draft],
+    );
+    await p.waitForSelector("[data-command-judgement]");
+    const read = await p.locator("[data-command-judgement]").innerText();
+    check(
+      `[commands ${width}px] each command reads with its rule, the rules that lost, and what can't be seen`,
+      read.includes("word --watch (machine)") && read.includes("allow kubectl get * (workspace) — being typed") &&
+        read.includes("no rule matched") && read.includes("its output is only known when it runs") && /Line:\s*deny/.test(read),
+    );
+    await sweep(p, `settings › Commands tester at ${width}px`);
+    await p.screenshot({ path: `${OUT}/settings-commands-tester-${width}.png`, fullPage: true });
+    await p.close();
+  }
 }
 
 await browser.close();
