@@ -11,13 +11,15 @@ import { fakeAgent } from "./support/fake-agent";
 import { IDLE, idler } from "./support/idler";
 import { orchestratorHarness } from "./support/orchestrator-harness";
 import { atTestEnd, tempDir } from "./support/teardown";
-import { SETTLE } from "./support/wait-for";
+import { PROCESS_READS_TIMEOUT, SETTLE } from "./support/wait-for";
 import { commandOf, commandsOf, killTree, trackedChild } from "../src/orchestrator/process-tree";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { type SpawnRecord, SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
 import { formatCommandLine } from "../src/shared/command-line";
 import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
+
+vi.setConfig({ testTimeout: PROCESS_READS_TIMEOUT });
 
 /** An idler, ended at the test's end, once it runs its own command line —
  * `spawn` fires after the exec, never on the parent's copy before it. */

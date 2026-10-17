@@ -8,6 +8,14 @@
  * full suite. */
 export const SETTLE = { timeout: process.platform === "win32" ? 15_000 : 5_000, interval: 10 };
 
+/** A test's own budget when its work reads processes' command lines — on
+ * Windows each read is a PowerShell process: about 1.5 s alone, past 5 s
+ * under the full suite, and such a test makes several (its records, the
+ * window's start sweep) besides starting and ending processes of its own.
+ * Elsewhere the suite's default stands. Set per file, where those reads
+ * are the work. */
+export const PROCESS_READS_TIMEOUT = process.platform === "win32" ? 60_000 : 5_000;
+
 /** The electron suite's budget: what it waits on crosses VS Code's own
  * window — a view mounting, an editor opening, a dialog — which a test
  * host under xvfb answers slower than a subprocess its reply. */

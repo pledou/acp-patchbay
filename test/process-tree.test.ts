@@ -11,11 +11,13 @@ import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { IDLE, idler } from "./support/idler";
 import { stopsAtTestEnd } from "./support/teardown";
-import { SETTLE } from "./support/wait-for";
+import { PROCESS_READS_TIMEOUT, SETTLE } from "./support/wait-for";
 import { commandOf, commandsOf, isAlive, killTree, reapOrphans, treeSpawnOptions } from "../src/orchestrator/process-tree";
 import { AgentPool } from "../src/orchestrator/pool";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 import type { PatchbayAgentId } from "../src/shared/ids";
+
+vi.setConfig({ testTimeout: PROCESS_READS_TIMEOUT });
 
 async function waitUntil(probe: () => boolean, what: string): Promise<void> {
   await vi.waitFor(
