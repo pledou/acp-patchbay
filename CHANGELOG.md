@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **On Windows, terminal commands find your tools — and only your tools.**
+  A command an agent ran through patchbay's terminal was started without
+  Windows' own lookup: `npm`, `npx`, `tsc` and other `.cmd` tools didn't
+  start at all, and `npm.cmd` named in full failed as an error to the agent
+  after you had approved it. Worse, a bare name was looked up in the
+  command's own folder first, so a repository carrying, say, a `git.exe` at
+  its root would have run that in place of the real one. Commands are now
+  found the way agents themselves are launched: through your PATH, never
+  the working folder; a `.cmd` runs only when no argument is one Windows'
+  shell would act on; and a command that can't start says why in its own
+  output. (#116)
 - **A decision a rule made no longer calls you.** An edit or a file write
   your write places allowed showed its card open for an instant before the
   rule settled it — long enough, in a session you weren't looking at, to
