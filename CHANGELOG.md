@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Command rules judge every command a line runs.** A rule matched the
+  whole command line, so `kubectl get pods && rm -rf /` passed on an
+  allow for `kubectl get *`, and the first matching rule in the list won.
+  Now each command in a chain, a pipeline, a loop or a `bash -c` script is
+  judged on its own and the line takes the most severe verdict. A new kind
+  of rule, a word, matches one word wherever it sits (`--watch` catches
+  `kubectl get pods --watch`, never `cat watch.log`) and can deny or ask.
+  Within a layer, deny beats ask beats allow, whatever the order. A line
+  whose commands can't be seen from its text — `eval`, `$(…)`, a command
+  named by a variable — asks. Your rules keep their meaning, as patterns
+  over one command; a rule written for a whole chain now needs each of
+  its commands allowed. Thanks to @mwielgosz-esky. (#104)
+- **A rule's decision shows its card.** A command a rule allowed or
+  rejected left only a line in the audit log; its card now shows, settled,
+  naming the command and the rule that decided it, and a card that asks
+  says why. Settings › Commands tests a line against your rules before an
+  agent runs it, counting the rule you are typing, and each list shows how
+  many rules allow, ask and deny. An agent that runs commands itself still
+  asks through its own permission requests: ACP gives those no command a
+  rule could match. Thanks to @mwielgosz-esky. (#95)
 - **Stopping an agent never ends someone else's process.** A stop ended
   with one more kill of the agent's process tree by its process id, even
   after the agent had already exited. Windows hands a freed id to the
