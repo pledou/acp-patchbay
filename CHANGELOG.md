@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.88.0 — 2026-10-17
+
+Permissions, reworked: every command a line runs is judged, with word rules and
+a tester (#95, #104), and file writes are approved where you say (#102); your
+configuration exports to a file (#46); and a round of Windows and window fixes.
 
 - **On Windows, terminal commands find your tools — and only your tools.**
   A command an agent ran through patchbay's terminal was started without
