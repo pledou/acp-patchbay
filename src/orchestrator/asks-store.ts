@@ -233,46 +233,45 @@ export class AsksStore {
     return { id, ending };
   }
 
-  /** The ask's card goes out — unless the ask ended first. */
-  show(id: PatchbayAskId, card: AskCard): void {
+  /** The ask's card goes out — unless the ask ended first. With a rule's
+   * verdict, it goes out settled by the rule: shown and settled in one
+   * change, so no one is ever called to an ask a rule already answered. */
+  show(id: PatchbayAskId, card: AskCard, rule?: "allow" | "deny"): void {
     const ask = this.rows.get(id);
     if (ask?.state !== "open") return;
     ask.shown = true;
+    const line = this.cardLine(ask, card);
+    if (rule !== undefined) {
+      this.settle(ask, { end: "rule", allowed: rule === "allow" }, line);
+      return;
+    }
+    this.emitAt(ask, line);
+    if (card.kind === "question") this.awaitCompletion(ask);
+  }
+
+  /** The line a card goes out on, the ask holding what an answer to it may
+   * pick and what it would change. */
+  private cardLine(ask: Ask, card: AskCard): CardEvent {
+    const at = { patchbayAskId: ask.id };
     switch (card.kind) {
       case "options":
         ask.options = card.options;
         ask.proposals = card.proposals ?? [];
-        this.emitAt(ask, {
+        return {
           kind: "permissionRequested",
-          patchbayAskId: id,
+          ...at,
           title: card.title,
           detail: card.detail,
           facts: card.facts,
           options: card.options,
           ...(card.call !== undefined ? { call: card.call } : {}),
-        });
-        return;
+        };
       case "write":
         ask.proposals = card.proposals;
-        this.emitAt(ask, { kind: "diffProposed", patchbayAskId: id, file: card.file, additions: card.additions, deletions: card.deletions, preview: card.preview });
-        return;
+        return { kind: "diffProposed", ...at, file: card.file, additions: card.additions, deletions: card.deletions, preview: card.preview };
       case "question":
-        this.emitAt(ask, { kind: "elicitationRequested", patchbayAskId: id, message: card.message, ...card.ask });
-        this.awaitCompletion(ask);
-        return;
+        return { kind: "elicitationRequested", ...at, message: card.message, ...card.ask };
     }
-  }
-
-  /** A rule allowed the ask before anyone had to answer it. */
-  allow(id: PatchbayAskId): void {
-    const ask = this.rows.get(id);
-    if (ask !== undefined) this.settle(ask, { end: "rule", allowed: true });
-  }
-
-  /** A rule rejected the ask before anyone had to answer it. */
-  deny(id: PatchbayAskId): void {
-    const ask = this.rows.get(id);
-    if (ask !== undefined) this.settle(ask, { end: "rule", allowed: false });
   }
 
   /** The user picked an option on a permission or command card, or its
@@ -383,16 +382,18 @@ export class AsksStore {
   }
 
   /** The one writer: moves the ask as MOVES allows, then writes what the
-   * end owes — the card's resolution, the record, and, on the first move
-   * out of open, the caller's answer, once the record is written. */
-  private settle(ask: Ask, move: Move): void {
+   * end owes — the card's resolution (out with the card itself, when the
+   * card goes out settled), the record, and, on the first move out of
+   * open, the caller's answer, once the record is written. */
+  private settle(ask: Ask, move: Move, shown?: CardEvent): void {
     const from = ask.state;
     const next = MOVES[move.end][from];
     if (next === undefined) return;
     ask.state = next;
     if (!movable(ask)) this.rows.delete(ask.id);
     const card = cardOf(ask, from, move);
-    if (card !== null) this.emitAt(ask, card);
+    const lines = [...(shown === undefined ? [] : [shown]), ...(card === null ? [] : [card])];
+    if (lines.length > 0) this.emitAt(ask, ...lines);
     if (move.end === "linkOpened" && ask.link !== null) this.hooks.openLink?.(ask.link.href);
     if (from !== "open") return;
     this.hooks.ended?.(ask.id);
@@ -441,10 +442,11 @@ export class AsksStore {
     this.hooks.onAuditWritten();
   }
 
-  /** A card's line, where its card shows. */
-  private emitAt(ask: Ask, event: CardEvent): void {
-    if ("patchbaySessionId" in ask.at) this.hooks.emit({ ...event, patchbaySessionId: ask.at.patchbaySessionId });
-    else if (isQuestionEvent(event)) this.hooks.emitAgent(ask.at.patchbayAgentId, event);
+  /** A card's lines, where its card shows — together, as one change. */
+  private emitAt(ask: Ask, ...events: CardEvent[]): void {
+    const at = ask.at;
+    if ("patchbaySessionId" in at) this.hooks.emit(...events.map((e) => ({ ...e, patchbaySessionId: at.patchbaySessionId })));
+    else for (const event of events) if (isQuestionEvent(event)) this.hooks.emitAgent(at.patchbayAgentId, event);
   }
 }
 

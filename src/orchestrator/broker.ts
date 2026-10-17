@@ -241,8 +241,7 @@ export class PermissionBroker {
     const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
     // The card shows either way — a rule changes who answers, never what is
     // visible — and a rule's answer settles it at once.
-    this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call), proposals });
-    if (auto !== undefined) this.asks.allow(id);
+    this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call), proposals }, auto !== undefined ? "allow" : undefined);
     const ended = await ending;
     if (ended.end === "rule" && auto !== undefined) return { optionId: auto.optionId };
     if (ended.end === "user" && ended.choice.kind === "option") return { optionId: ended.choice.option.optionId };
@@ -289,8 +288,7 @@ export class PermissionBroker {
     const allowed = (await this.evaluateFileWrites(patchbaySessionId, [path])) === "allow";
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
     const proposals = allowed ? [] : [{ path, oldText: oldContent, newText: newContent }];
-    this.asks.show(id, { kind: "write", file: path, additions, deletions, preview: previewOf(lines), proposals });
-    if (allowed) this.asks.allow(id);
+    this.asks.show(id, { kind: "write", file: path, additions, deletions, preview: previewOf(lines), proposals }, allowed ? "allow" : undefined);
     const ended = await ending;
     if (ended.end === "rule") return ended.allowed ? "accepted" : "rejected";
     if (ended.end === "user" && ended.choice.kind === "write") return ended.choice.accepted ? "accepted" : "rejected";
@@ -315,8 +313,8 @@ export class PermissionBroker {
     const always = judgement.verdict === "ask" ? alwaysRules(judgement) : null;
     // The card shows either way — a rule changes who answers, never what is
     // visible — and a rule's answer settles it at once, naming the rule.
-    this.asks.show(id, {
-      kind: "options",
+    const card = {
+      kind: "options" as const,
       title: "Terminal",
       detail: command,
       facts: [
@@ -325,9 +323,8 @@ export class PermissionBroker {
         ...judgementFacts(judgement),
       ],
       options: always === null ? [ALLOW_ONCE, REJECT] : [ALLOW_ONCE, ALLOW_ALWAYS, REJECT],
-    });
-    if (judgement.verdict === "allow") this.asks.allow(id);
-    if (judgement.verdict === "deny") this.asks.deny(id);
+    };
+    this.asks.show(id, card, judgement.verdict === "ask" ? undefined : judgement.verdict);
     const ended = await ending;
     if (ended.end === "rule") return ended.allowed ? "accepted" : "rejected";
     if (ended.end !== "user" || ended.choice.kind !== "option") return "cancelled";

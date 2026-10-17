@@ -51,6 +51,7 @@ function harness(live: Partial<Pick<OrchestratorPorts, "readTextFileLive" | "wri
     sessions: o.sessions,
     events: h.agentView.events,
     state: h.agentView.state,
+    notified: () => h.asked.filter((a) => a.port === "notifyAsk"),
     started: h.started,
     /** Every row the wire has proven or put under suspicion — each test
      * drives one agent. */
@@ -89,6 +90,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     // engine's line-counting rules).
     expect(diff.additions).toBe(1);
     expect(diff.resolution).toEqual({ accepted: true, auto: true });
+    expect(h.notified()).toEqual([]); // nothing was ever asked of anyone
     await h.pool.stop("w1" as PatchbayAgentId);
   });
 
@@ -219,6 +221,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const texts = streamedText(patchbaySessionId, h.state());
     expect(texts.includes("exit=0")).toBe(true);
     expect(texts.includes("hi from child")).toBe(true);
+    // Its card shows settled by the rule — never an ask waiting on anyone,
+    // so nothing calls for the user (no session here is on screen).
+    expect(assertKind(h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "permission"), "permission").resolution).toEqual({ label: "Allowed", auto: true });
+    expect(h.notified()).toEqual([]);
     await h.pool.stop("c1" as PatchbayAgentId);
   });
 
@@ -314,6 +320,8 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       `command: rejected (-32803 The user rejected the command \`${formatCommandLine(process.execPath, ["-e", "1"])}\`)`,
     );
     expect(h.evidence()).toContain("terminal:used");
+    expect(assertKind(h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "permission"), "permission").resolution).toEqual({ label: "Rejected", auto: true });
+    expect(h.notified()).toEqual([]);
     await h.pool.stop("c2" as PatchbayAgentId);
   });
 
@@ -336,6 +344,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     expect(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")).toMatchObject({
       resolution: { label: "Allowed", auto: true },
     });
+    expect(h.notified()).toEqual([]);
     await h.pool.stop("p1" as PatchbayAgentId);
   });
 

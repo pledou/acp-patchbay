@@ -1342,7 +1342,9 @@ supplies each agent in its own standard — and ACP carries no channel for it
   view badge, the header read-out of the other sessions and the drawer's marks
   read it, so an answer anywhere clears them all. The native notification is
   raised from it — every ask that starts off screen raises one, whatever its
-  kind — never by a call each ask site remembers to make. It cannot follow the
+  kind — never by a call each ask site remembers to make. A card a rule
+  answers goes out already settled, in the same change that shows it, so it
+  never reads as waiting and raises nothing. It cannot follow the
   fact back: VS Code gives an extension no way to close its own notification,
   so one whose ask is answered elsewhere stays until dismissed, and its
   buttons check the ask when pressed — an answer to a settled ask does

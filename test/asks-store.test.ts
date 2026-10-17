@@ -136,7 +136,7 @@ describe("AsksStore — an ask that ends before its card shows", () => {
     const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
     asks.stopSession(S1);
     asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, preview: [], proposals: [{ path: "/w/a.ts", oldText: "", newText: "x" }] });
-    asks.allow(id); // a rule's verdict that comes too late
+    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, preview: [], proposals: [] }, "allow"); // a rule's verdict that comes too late
     pending[0]!.land();
     expect(await ending).toEqual({ end: "stop" });
     expect(events).toEqual([]);
@@ -220,8 +220,7 @@ describe("AsksStore — an ask's end is said once", () => {
     asks.answerWrite(user.id, true);
     asks.answerWrite(user.id, false); // a second click moves nothing
     const rule = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
-    asks.show(rule.id, { ...card, proposals: [] });
-    asks.allow(rule.id);
+    asks.show(rule.id, { ...card, proposals: [] }, "allow");
     const stopped = asks.open({ patchbaySessionId: S1 }, "permission", { tool: "Edit" });
     asks.show(stopped.id, { kind: "options", title: "Edit", detail: "", facts: [], options: [], proposals: [change] });
     asks.stopSession(S1);

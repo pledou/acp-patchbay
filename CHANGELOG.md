@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A decision a rule made no longer calls you.** An edit or a file write
+  your write places allowed showed its card open for an instant before the
+  rule settled it — long enough, in a session you weren't looking at, to
+  raise a notification asking you to decide what was already decided. A
+  card a rule answers now shows settled from the start.
 - **Command rules judge every command a line runs.** A rule matched the
   whole command line, so `kubectl get pods && rm -rf /` passed on an
   allow for `kubectl get *`, and the first matching rule in the list won.
