@@ -239,6 +239,12 @@ deliverable.
   with per-workspace rules evaluated first — a workspace can tighten or loosen
   its own floor, and no rule anywhere means ask. Neither layer ever rides the
   repo.
+- Every command a line runs is judged — inside a chain, a pipeline, a loop,
+  a `bash -c` script — by a pattern over the command or by a word wherever
+  it sits (`sudo`, `--watch`); a rejected word rejects the line, the order
+  rules were added in decides nothing, and a line whose commands can't be
+  seen from its text asks. A rule's decision shows its card, settled, naming
+  the rule.
 - File writes are approved without asking in the places the user picks: the
   workspace (on by default), the roots added to a session, the temp dir, and
   any folder they add — each set for this machine and, where one project needs it

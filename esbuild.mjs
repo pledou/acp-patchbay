@@ -147,19 +147,25 @@ const configs = [
 ];
 
 // Font assets aren't JS/CSS esbuild bundles — copied straight from the
-// installed package so both webviews share one codicon.css/.ttf pair.
-function copyCodicons() {
+// installed package so both webviews share one codicon.css/.ttf pair. The
+// bash grammar the command rules read lines with is WebAssembly the parser
+// loads at run time — copied the same way, the parser and the one grammar.
+function copyAssets() {
   mkdirSync("out/codicons", { recursive: true });
   for (const file of ["codicon.css", "codicon.ttf"]) {
     copyFileSync(`node_modules/@vscode/codicons/dist/${file}`, `out/codicons/${file}`);
   }
+  mkdirSync("out/tree-sitter", { recursive: true });
+  for (const file of ["tree-sitter.wasm", "tree-sitter-bash.wasm"]) {
+    copyFileSync(`node_modules/@vscode/tree-sitter-wasm/wasm/${file}`, `out/tree-sitter/${file}`);
+  }
 }
 
 if (watch) {
-  copyCodicons();
+  copyAssets();
   const contexts = await Promise.all(configs.map((c) => esbuild.context(c)));
   await Promise.all(contexts.map((c) => c.watch()));
 } else {
   await Promise.all(configs.map((c) => esbuild.build(c)));
-  copyCodicons();
+  copyAssets();
 }

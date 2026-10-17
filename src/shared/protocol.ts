@@ -217,7 +217,7 @@ export type Action =
    * (workspaceState, this repo, evaluated first) or "machine" (machine store,
    * every workspace, the fallback floor). */
   | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
-  | { kind: "removeCommandRule"; pattern: string; layer: "workspace" | "machine" }
+  | { kind: "removeCommandRule"; rule: Pick<CommandRuleView, "kind" | "pattern">; layer: "workspace" | "machine" }
   /** One place's answer at one layer — null: the layer says nothing of it
    * (the workspace follows the machine — or drops a folder only it
    * added; the machine goes back to the default, or drops its folder). */
@@ -2657,9 +2657,36 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
 
 // ── settings channel ─────────────────────────────────────────────────────────
 
-export interface CommandRuleView {
-  pattern: string;
+/** A command rule: a pattern over a command's whole text, `*` matching
+ * anything, or one word anywhere in a command, `*` matching within the
+ * word. A word only denies or asks. */
+export type CommandRuleView =
+  | { kind: "command"; pattern: string; verdict: "allow" | "ask" | "deny" }
+  | { kind: "word"; pattern: string; verdict: "ask" | "deny" };
+
+/** A rule as it bore on a command, and the layer it sits in. */
+export interface RuleMatchView {
+  rule: CommandRuleView;
+  layer: "workspace" | "machine";
+}
+
+/** How the rules judged one command a line runs: its verdict, the rule
+ * that decided it (null: no rule matched, so it asks), and every other rule
+ * that matched and lost. */
+export interface CommandVerdictView {
+  text: string;
   verdict: "allow" | "ask" | "deny";
+  by: RuleMatchView | null;
+  also: readonly RuleMatchView[];
+}
+
+/** How the rules judged a line: every command it runs, every part whose
+ * commands can't be seen from its text — each asks — and the line's own
+ * verdict, the most severe of them. */
+export interface CommandJudgementView {
+  verdict: "allow" | "ask" | "deny";
+  commands: readonly CommandVerdictView[];
+  unreadable: readonly { text: string; reason: string }[];
 }
 
 /** A place where an agent's writes are approved without asking — or, first

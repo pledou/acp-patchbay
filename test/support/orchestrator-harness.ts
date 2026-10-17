@@ -15,6 +15,7 @@ import { MemorySecrets } from "../../src/orchestrator/stores/mcp-server-tokens";
 import type { PatchbayAgentId } from "../../src/shared/ids";
 import type { AgentConfigView, AgentViewEvent, AgentViewState, HostToView, SettingsEvent, SettingsState } from "../../src/shared/protocol";
 import { atTestEnd, stopsAtTestEnd } from "./teardown";
+import { SHELL_GRAMMAR } from "./shell-grammar";
 
 /** One view as a webview sees it: every patch it was sent, in order. */
 export interface WatchedView<S, E> {
@@ -149,6 +150,7 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
         editorServer: join(process.cwd(), "out", "mcp-server.js"),
         bridge: join(process.cwd(), "out", "mcp-bridge.js"),
       },
+      shellGrammar: SHELL_GRAMMAR,
     },
     ports,
     nullLogger,

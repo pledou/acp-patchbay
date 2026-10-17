@@ -207,7 +207,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness();
     const { rules } = h;
     await rules.set({
-      commandRules: [{ pattern: `${NODE} *`, verdict: "allow" }],
+      commandRules: [{ kind: "command", pattern: `${NODE} *`, verdict: "allow" }],
       writeScope: [],
     });
     await h.pool.connect(
@@ -238,6 +238,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     expect(card.facts).toEqual([
       { label: "cwd", value: dir },
       { label: "env", value: "PB_PROBE=set by agent" },
+      { label: "asks", value: `${card.detail} — no rule matched` },
     ]);
     h.asks.answerOption(card.id, "allow_once");
     await turn;
@@ -253,7 +254,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const patchbaySessionId = await h.sessions.createSession("c64" as PatchbayAgentId, "Fake Agent", workspaceRoot);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     const card = assertKind(await waitFor(() => h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "permission")), "permission");
-    expect(card.facts).toEqual([{ label: "cwd", value: workspaceRoot }]);
+    expect(card.facts).toEqual([
+      { label: "cwd", value: workspaceRoot },
+      { label: "asks", value: `${card.detail} — no rule matched` },
+    ]);
     h.asks.answerOption(card.id, "allow_once");
     await turn;
     expect(streamedText(patchbaySessionId, h.state()).includes(`cwd=${workspaceRoot}`)).toBe(true);
@@ -266,7 +270,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
   ] as const) {
     it(`a session re-attached by ${via} after a restart runs a cwd-less command in its own cwd (issue #64)`, async () => {
       const h = harness();
-      await h.rules.set({ commandRules: [{ pattern: `${NODE} *`, verdict: "allow" }], writeScope: [] });
+      await h.rules.set({ commandRules: [{ kind: "command", pattern: `${NODE} *`, verdict: "allow" }], writeScope: [] });
       const probe = { type: "runCommand" as const, command: process.execPath, args: ["-e", "console.log('cwd=' + process.cwd())"] };
       const patchbayAgentId = `c64-${via.slice(8)}` as PatchbayAgentId;
       await h.pool.connect(spec({ declare, turn: [probe] }, patchbayAgentId));
@@ -298,7 +302,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
   it("a denied command never spawns a process", async () => {
     const h = harness();
     await h.rules.set({
-      commandRules: [{ pattern: "*", verdict: "deny" }],
+      commandRules: [{ kind: "command", pattern: "*", verdict: "deny" }],
       writeScope: [],
     });
     await h.pool.connect(
@@ -591,7 +595,7 @@ describe("ClientHost — a terminal answers only the session that made it (#76)"
 
   it("another session — its agent's or another's — finds no such terminal: no output, no wait, no kill, no release", async () => {
     const h = harness();
-    await h.rules.set({ commandRules: [{ pattern: `${NODE} *`, verdict: "allow" }], writeScope: [] });
+    await h.rules.set({ commandRules: [{ kind: "command", pattern: `${NODE} *`, verdict: "allow" }], writeScope: [] });
     const { terminalId } = await h.host.createTerminal(
       { sessionId: "agent-a", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"], env: {} },
       { id: A, cwd: workspaceRoot },
@@ -648,7 +652,7 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
 
   it("a command that never starts says why in its own output, and terminal ids never repeat (#80)", async () => {
     const h = harness();
-    await h.rules.set({ commandRules: [{ pattern: "*", verdict: "allow" }], writeScope: [] });
+    await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
     const S = "s" as PatchbaySessionId;
     const create = () =>
       h.host.createTerminal({ sessionId: "s", command: join(dir, "no-such-command"), args: [], env: {} }, { id: S, cwd: workspaceRoot });

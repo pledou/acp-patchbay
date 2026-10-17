@@ -119,7 +119,7 @@ describe("what a window spawns", () => {
     const o = h.orchestrator;
     atTestEnd(() => o.clientHost.killAll()); // a terminal ends before its folder goes
     await o.pool.connect(fakeAgent({}, "tracked", cwd));
-    await o.permissionRules.set({ commandRules: [{ pattern: `${formatCommandLine(process.execPath, [])} *`, verdict: "allow" }], writeScope: [] });
+    await o.permissionRules.set({ commandRules: [{ kind: "command", pattern: `${formatCommandLine(process.execPath, [])} *`, verdict: "allow" }], writeScope: [] });
     await o.clientHost.createTerminal(
       { sessionId: "s", command: process.execPath, args: ["-e", IDLE], env: {} },
       { id: "s" as PatchbaySessionId, cwd },

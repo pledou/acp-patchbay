@@ -80,8 +80,8 @@ describe("eraseAllData", () => {
     const host = { pid: process.pid, command: await commandOf(process.pid) };
     await globalKv.update(STORAGE_KEYS.spawnRegistry, [{ id: "4242", pid: 4242, command: "node agent.js", kind: "agent", at: "2026-07-21T00:00:00Z", owner: host }]);
     expect(spawnRegistry.list()).toHaveLength(1);
-    await permissionRules.set({ commandRules: [{ pattern: "npm *", verdict: "allow" }], writeScope: [{ location: { kind: "alwaysAsk" }, on: true }] });
-    await machineRules.set([{ pattern: "git status", verdict: "allow" }]);
+    await permissionRules.set({ commandRules: [{ kind: "command", pattern: "npm *", verdict: "allow" }], writeScope: [{ location: { kind: "alwaysAsk" }, on: true }] });
+    await machineRules.set([{ kind: "command", pattern: "git status", verdict: "allow" }]);
     await machineWriteScope.set([{ location: { kind: "path", path: "/home/me/.hermes" }, on: true }]);
     await decisionAudit.append({ kind: "permission", decision: "allow" });
     await lastConnected.write(["claude" as PatchbayAgentId]);

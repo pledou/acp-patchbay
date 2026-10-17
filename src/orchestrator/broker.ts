@@ -24,10 +24,20 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { formatCommandLine } from "../shared/command-line";
-import type { ElicitationAnswer, ElicitationAsk, PermissionCallView, PermissionOptionView } from "../shared/protocol";
+import { matchLabel } from "../shared/command-rules";
+import type {
+  CommandJudgementView,
+  ElicitationAnswer,
+  ElicitationAsk,
+  PermissionCallView,
+  PermissionFact,
+  PermissionOptionView,
+} from "../shared/protocol";
 import type { AskPlace, AsksStore, LinkCompletion, Proposal } from "./asks-store";
+import { judgeCommands, type RuleLayers } from "./command-judge";
 import { computeLineDiff, previewOf } from "./diff";
-import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
+import type { ShellReader } from "./shell-reading";
+import { type CommandRule, type MachineRulesStore, type PermissionRulesStore, type RuleVerdict, withRule } from "./stores/permission-rules";
 import { type MachineWriteScopeStore, writeScopeRows } from "./stores/write-scope";
 import type { CreateTerminalParams } from "./terminal-runner";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../shared/ids";
@@ -37,15 +47,32 @@ import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../share
  * same as rejecting. */
 export type GateOutcome = "accepted" | "rejected" | "cancelled";
 
-const STANDARD_OPTIONS: readonly PermissionOptionView[] = [
-  { optionId: "allow_once", label: "Allow once", kind: "allow_once" },
-  { optionId: "allow_always", label: "Always allow", kind: "allow_always" },
-  { optionId: "reject_once", label: "Reject", kind: "reject_once" },
-];
+const ALLOW_ONCE: PermissionOptionView = { optionId: "allow_once", label: "Allow once", kind: "allow_once" };
+const ALLOW_ALWAYS: PermissionOptionView = { optionId: "allow_always", label: "Always allow", kind: "allow_always" };
+const REJECT: PermissionOptionView = { optionId: "reject_once", label: "Reject", kind: "reject_once" };
 
-function patternToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`);
+/** What "Always allow" would save for a line that asks: an allow rule for
+ * each command no rule answered, exactly as it reads. Null when that can't
+ * say it — a part it can't see, a command an ask rule holds (the user's
+ * own rule says to ask), or a `*` a pattern would read as a wildcard. */
+function alwaysRules(judgement: CommandJudgementView): CommandRule[] | null {
+  if (judgement.unreadable.length > 0) return null;
+  const asking = judgement.commands.filter((c) => c.verdict === "ask");
+  if (asking.some((c) => c.by !== null || c.text.includes("*"))) return null;
+  return asking.map((c) => ({ kind: "command", pattern: c.text, verdict: "allow" }));
+}
+
+const VERDICT_WORD: Readonly<Record<RuleVerdict, string>> = { allow: "allowed", ask: "asks", deny: "rejected" };
+
+/** What a card says of the judgement: each command that set the line's
+ * verdict, and the rule that decided it — or, for a line that asks, why:
+ * no rule matched, an ask rule, a part that can't be seen. */
+function judgementFacts(judgement: CommandJudgementView): PermissionFact[] {
+  const deciding = judgement.commands
+    .filter((c) => c.verdict === judgement.verdict)
+    .map((c) => ({ label: VERDICT_WORD[c.verdict], value: `${c.text} — ${c.by === null ? "no rule matched" : matchLabel(c.by)}` }));
+  const unseen = judgement.verdict === "ask" ? judgement.unreadable.map((u) => ({ label: "asks", value: `${u.text} — ${u.reason}` })) : [];
+  return [...deciding, ...unseen];
 }
 
 function isUnder(path: string, root: string): boolean {
@@ -85,6 +112,8 @@ export class PermissionBroker {
     /** `text` with every value patchbay handed an agent masked — for agent
      * text a card shows, which such a value can ride back in. */
     private readonly redact: (text: string) => string,
+    /** Reads what a command line runs. */
+    private readonly reader: ShellReader,
     /** Machine-layer command rules — absent in tests that don't exercise
      * layering; the workspace layer alone then behaves as before. */
     private readonly machineRules: MachineRulesStore | null = null,
@@ -98,19 +127,17 @@ export class PermissionBroker {
     private readonly currentText: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
   ) {}
 
-  /** Two layers, workspace first (permission-rules.ts): the workspace's own
-   * rule wins wherever both match — it can tighten or loosen the machine
-   * floor for this repo — and the machine layer answers only where the
-   * workspace stayed silent. First match wins within each layer. */
-  evaluateCommand(command: string): RuleVerdict {
-    const { commandRules } = this.rules.get();
-    for (const rule of commandRules) {
-      if (patternToRegExp(rule.pattern).test(command)) return rule.verdict;
-    }
-    for (const rule of this.machineRules?.get().commandRules ?? []) {
-      if (patternToRegExp(rule.pattern).test(command)) return rule.verdict;
-    }
-    return "ask"; // no matching rule in either layer — the safe default, never a silent allow
+  /** A line as a shell would run it, judged by the rules — with `draft`
+   * among them, at its layer, when one is given: what a rule would catch
+   * before it is added. */
+  async judgeLine(line: string, draft?: { rule: CommandRule; layer: "workspace" | "machine" }): Promise<CommandJudgementView> {
+    const layers = this.layers();
+    if (draft !== undefined) layers[draft.layer] = withRule(layers[draft.layer], draft.rule);
+    return judgeCommands(await this.reader.readLine(line), layers);
+  }
+
+  private layers(): { -readonly [L in keyof RuleLayers]: readonly CommandRule[] } {
+    return { workspace: this.rules.get().commandRules, machine: this.machineRules?.get().commandRules ?? [] };
   }
 
   /** Allows only when every path lands inside a place the write scope
@@ -241,11 +268,9 @@ export class PermissionBroker {
     };
   }
 
-  private async persistAllowRule(pattern: string): Promise<void> {
-    await this.rules.set({
-      ...this.rules.get(),
-      commandRules: [...this.rules.get().commandRules, { pattern, verdict: "allow" }],
-    });
+  private async persistAllowRules(added: readonly CommandRule[]): Promise<void> {
+    const rules = this.rules.get();
+    await this.rules.set({ ...rules, commandRules: added.reduce(withRule, rules.commandRules) });
   }
 
   /** Patchbay's own mandatory gate on fs/write_text_file. Always produces a
@@ -267,7 +292,7 @@ export class PermissionBroker {
     this.asks.show(id, { kind: "write", file: path, additions, deletions, preview: previewOf(lines), proposals });
     if (allowed) this.asks.allow(id);
     const ended = await ending;
-    if (ended.end === "rule") return "accepted";
+    if (ended.end === "rule") return ended.allowed ? "accepted" : "rejected";
     if (ended.end === "user" && ended.choice.kind === "write") return ended.choice.accepted ? "accepted" : "rejected";
     return "cancelled";
   }
@@ -276,19 +301,20 @@ export class PermissionBroker {
    * process ever spawns; approval is required, not advisory. Handed
    * exactly what will run: the card shows the command line with its
    * argument boundaries, the directory, and every variable the agent sets
-   * (values patchbay handed out masked). A rule speaks for the command
-   * line alone — trusting a command trusts it under whatever directory and
-   * environment the agent runs it with. The record names the variables,
-   * never their values. */
+   * (values patchbay handed out masked). Every command the run holds is
+   * judged — a shell's script read through to the commands it runs. A rule
+   * speaks for the command alone — trusting a command trusts it under
+   * whatever directory and environment the agent runs it with. The record
+   * names the variables, never their values. */
   async gateCommand(patchbaySessionId: PatchbaySessionId, run: CreateTerminalParams): Promise<GateOutcome> {
     const command = formatCommandLine(run.command, run.args);
-    const subject = { command, cwd: run.cwd, env: Object.keys(run.env) };
-    const verdict = this.evaluateCommand(command);
-    if (verdict !== "ask") {
-      await this.asks.record(verdict === "allow" ? "auto-allow" : "auto-deny", subject, patchbaySessionId);
-      return verdict === "allow" ? "accepted" : "rejected";
-    }
-    const { id, ending } = this.asks.open({ patchbaySessionId }, "command", subject);
+    // The place is held before the line is read: a turn stopped meanwhile
+    // answers this command too, before any card was shown.
+    const { id, ending } = this.asks.open({ patchbaySessionId }, "command", { command, cwd: run.cwd, env: Object.keys(run.env) });
+    const judgement = judgeCommands(await this.reader.readRun(run.command, run.args), this.layers());
+    const always = judgement.verdict === "ask" ? alwaysRules(judgement) : null;
+    // The card shows either way — a rule changes who answers, never what is
+    // visible — and a rule's answer settles it at once, naming the rule.
     this.asks.show(id, {
       kind: "options",
       title: "Terminal",
@@ -296,13 +322,17 @@ export class PermissionBroker {
       facts: [
         { label: "cwd", value: run.cwd },
         ...Object.entries(run.env).map(([name, value]) => ({ label: "env", value: `${name}=${this.redact(value)}` })),
+        ...judgementFacts(judgement),
       ],
-      options: STANDARD_OPTIONS,
+      options: always === null ? [ALLOW_ONCE, REJECT] : [ALLOW_ONCE, ALLOW_ALWAYS, REJECT],
     });
+    if (judgement.verdict === "allow") this.asks.allow(id);
+    if (judgement.verdict === "deny") this.asks.deny(id);
     const ended = await ending;
+    if (ended.end === "rule") return ended.allowed ? "accepted" : "rejected";
     if (ended.end !== "user" || ended.choice.kind !== "option") return "cancelled";
     const picked = ended.choice.option.kind;
-    if (picked === "allow_always") await this.persistAllowRule(command);
+    if (picked === "allow_always" && always !== null) await this.persistAllowRules(always);
     return picked === "allow_once" || picked === "allow_always" ? "accepted" : "rejected";
   }
 }

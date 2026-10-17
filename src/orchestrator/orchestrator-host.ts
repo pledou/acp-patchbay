@@ -33,6 +33,7 @@ import {
   resolveDistribution,
 } from "./stores/acp-registry";
 import { FileKV } from "./stores/file-kv";
+import { sameRule, withRule } from "./stores/permission-rules";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
@@ -115,6 +116,7 @@ export class OrchestratorHost {
           editorServer: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath,
           bridge: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-bridge.js").fsPath,
         },
+        shellGrammar: vscode.Uri.joinPath(context.extensionUri, "out", "tree-sitter").fsPath,
       },
       {
         handleAction: (action) => this.handleAction(action),
@@ -887,37 +889,12 @@ export class OrchestratorHost {
       case "refreshRegistry":
         void this.orchestrator.acpRegistry.read("manual");
         break;
-      case "addCommandRule": {
-        if (action.layer === "machine") {
-          const machine = this.orchestrator.machinePermissionRules.get().commandRules;
-          void this.orchestrator.machinePermissionRules
-            .set([...machine, action.rule])
-            .then(() => this.orchestrator.publishRules());
-          break;
-        }
-        const rules = this.orchestrator.permissionRules.get();
-        void this.orchestrator.permissionRules
-          .set({ ...rules, commandRules: [...rules.commandRules, action.rule] })
-          .then(() => this.orchestrator.publishRules());
+      case "addCommandRule":
+        void this.orchestrator.setCommandRules(action.layer, (rules) => withRule(rules, action.rule));
         break;
-      }
-      case "removeCommandRule": {
-        if (action.layer === "machine") {
-          const machine = this.orchestrator.machinePermissionRules.get().commandRules;
-          void this.orchestrator.machinePermissionRules
-            .set(machine.filter((r) => r.pattern !== action.pattern))
-            .then(() => this.orchestrator.publishRules());
-          break;
-        }
-        const rules = this.orchestrator.permissionRules.get();
-        void this.orchestrator.permissionRules
-          .set({
-            ...rules,
-            commandRules: rules.commandRules.filter((r) => r.pattern !== action.pattern),
-          })
-          .then(() => this.orchestrator.publishRules());
+      case "removeCommandRule":
+        void this.orchestrator.setCommandRules(action.layer, (rules) => rules.filter((r) => !sameRule(r, action.rule)));
         break;
-      }
       case "setWriteLocation":
         void this.orchestrator.setWriteLocation(action.location, action.layer, action.on).then(() => this.orchestrator.publishRules());
         break;

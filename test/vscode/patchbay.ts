@@ -212,14 +212,14 @@ export class Patchbay {
       .join("");
   }
 
-  /** A machine command rule, as the Permissions page adds it. */
+  /** A machine command pattern, as the Commands page adds it. */
   async addMachineRule(pattern: string, verdict: "allow" | "ask" | "deny"): Promise<void> {
-    this.act({ kind: "addCommandRule", rule: { pattern, verdict }, layer: "machine" });
+    this.act({ kind: "addCommandRule", rule: { kind: "command", pattern, verdict }, layer: "machine" });
     await waitFor(() => this.hasMachineRule(pattern), WINDOW_SETTLE, `rule ${pattern}`);
   }
 
   async removeMachineRule(pattern: string): Promise<void> {
-    this.act({ kind: "removeCommandRule", pattern, layer: "machine" });
+    this.act({ kind: "removeCommandRule", rule: { kind: "command", pattern }, layer: "machine" });
     await waitFor(() => !(this.hasMachineRule(pattern)), WINDOW_SETTLE, `rule ${pattern} gone`);
   }
 
@@ -256,6 +256,6 @@ export class Patchbay {
   }
 
   private hasMachineRule(pattern: string): boolean {
-    return this.settings.machineCommandRules.some((r) => r.pattern === pattern);
+    return this.settings.machineCommandRules.some((r) => r.kind === "command" && r.pattern === pattern);
   }
 }

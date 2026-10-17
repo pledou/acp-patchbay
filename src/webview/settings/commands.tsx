@@ -20,7 +20,7 @@ function CommandRulesCard(props: {
   rules: readonly CommandRuleView[];
   emptyText: string;
   onAdd(rule: CommandRuleView): void;
-  onRemove(pattern: string): void;
+  onRemove(rule: CommandRuleView): void;
 }) {
   const [pattern, setPattern] = useState("");
   const [verdict, setVerdict] = useState<CommandRuleView["verdict"]>("allow");
@@ -41,7 +41,7 @@ function CommandRulesCard(props: {
           card after it, or its own add row, out of reach. */}
       <div className="max-h-[22rem] overflow-y-auto" data-rule-list>
         {props.rules.map((r) => (
-          <div className="rule" key={r.pattern}>
+          <div className="rule" key={`${r.kind}:${r.pattern}`}>
             <code>{r.pattern}</code>
             <span className={`verdict ${r.verdict}`}>{r.verdict}</span>
             <span
@@ -49,7 +49,7 @@ function CommandRulesCard(props: {
               role="button"
               tabIndex={0}
               aria-label={`Remove rule ${r.pattern}`}
-              onClick={() => props.onRemove(r.pattern)}
+              onClick={() => props.onRemove(r)}
             >
               <Icon name="close" />
             </span>
@@ -76,7 +76,7 @@ function CommandRulesCard(props: {
           size="sm"
           disabled={pattern.trim() === ""}
           onClick={() => {
-            props.onAdd({ pattern: pattern.trim(), verdict });
+            props.onAdd({ kind: "command", pattern: pattern.trim(), verdict });
             setPattern("");
           }}
         >
@@ -95,7 +95,7 @@ function CommandRulesCard(props: {
 export function CommandsSection(props: {
   state: SettingsState;
   onAddRule(rule: CommandRuleView, layer: "workspace" | "machine"): void;
-  onRemoveRule(pattern: string, layer: "workspace" | "machine"): void;
+  onRemoveRule(rule: CommandRuleView, layer: "workspace" | "machine"): void;
 }) {
   const { state } = props;
 
@@ -116,7 +116,7 @@ export function CommandsSection(props: {
         rules={state.commandRules}
         emptyText="No workspace rules — the machine layer (below) answers, then ask."
         onAdd={(rule) => props.onAddRule(rule, "workspace")}
-        onRemove={(pattern) => props.onRemoveRule(pattern, "workspace")}
+        onRemove={(rule) => props.onRemoveRule(rule, "workspace")}
       />
 
       <CommandRulesCard
@@ -125,7 +125,7 @@ export function CommandsSection(props: {
         rules={state.machineCommandRules}
         emptyText="No machine rules — every unmatched command asks."
         onAdd={(rule) => props.onAddRule(rule, "machine")}
-        onRemove={(pattern) => props.onRemoveRule(pattern, "machine")}
+        onRemove={(rule) => props.onRemoveRule(rule, "machine")}
       />
 
       <div className="note good">

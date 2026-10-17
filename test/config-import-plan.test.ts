@@ -54,8 +54,8 @@ describe("an import's plan", () => {
       ["mcpServer:context7", "new"],
       ["mcpServer:github", "new"],
       ["preferences", "differs"],
-      ["commandRule:git status", "new"],
-      ["commandRule:rm -rf *", "new"],
+      ["commandRule:command:git status", "new"],
+      ["commandRule:command:rm -rf *", "new"],
       ["savedRoot:/home/me/notes", "new"],
     ]);
     expect(of(plan, "agent:claude").flags).toEqual([]);
@@ -138,12 +138,12 @@ describe("an import's plan", () => {
     const plan = planImport(read, {
       ...empty,
       preferences: { ...DEFAULT_PREFERENCES, knobSource: "last-session", idleCloseMinutes: 45 },
-      machineCommandRules: [{ pattern: "git status", verdict: "ask" }, { pattern: "ls", verdict: "allow" }],
+      machineCommandRules: [{ kind: "command", pattern: "git status", verdict: "ask" }, { kind: "command", pattern: "ls", verdict: "allow" }],
       machineSavedRoots: ["/home/me/notes"],
     }, { ...here, pathExists: () => false });
     expect(of(plan, "preferences")).toMatchObject({ fate: "unchanged", differs: [] });
-    expect(of(plan, "commandRule:git status")).toMatchObject({ fate: "differs", differs: ["ask here, allow in the file"] });
-    expect(of(plan, "commandRule:rm -rf *").fate).toBe("new");
+    expect(of(plan, "commandRule:command:git status")).toMatchObject({ fate: "differs", differs: ["ask here, allow in the file"] });
+    expect(of(plan, "commandRule:command:rm -rf *").fate).toBe("new");
     expect(of(plan, "savedRoot:/home/me/notes")).toMatchObject({ fate: "unchanged", flags: [] });
     // What only this machine holds is no item: an import removes nothing.
     expect(plan.items.some((i) => i.label === "ls")).toBe(false);

@@ -1008,7 +1008,7 @@ The differentiator (the PRD's current-release scope), shipped complete:
   inverse of the launch-line parser, so argument boundaries survive as text), the
   cwd, and each env var the agent sets, values patchbay handed out masked by the
   wire log's own redaction. **A command rule trusts the command** (decided
-  2026-09-27): it matches the command line alone, and the cwd and env the agent
+  2026-09-27): it matches the commands the line runs alone, and the cwd and env the agent
   picks ride that trust — with the workspace in the write scope (the
   default) the agent can already change what an allowed command runs by editing workspace
   files, so they add nothing a rule guards. Accepted edge: under Always ask,
@@ -1196,16 +1196,51 @@ supplies each agent in its own standard — and ACP carries no channel for it
 ## Permission broker
 
 - **One rule set, one approval path** — ACP `session/request_permission`, local MCP
-  tool calls, and terminal execution all route through the same broker evaluating
-  the same command rules (workspace rules, then machine rules) and file-write
-  scope.
+  tool calls, and terminal execution all route through the same broker, its
+  command rules (workspace rules, then machine rules) and file-write scope.
   A second, differently-scrutinized approval surface is exactly what a malicious
   prompt would target. An agent's own `session/request_permission` is judged only
   when it is an edit — by the file-write scope over every file it names: the
   locations it reports and the path of each diff it carries, the write's own
-  target; ACP gives an execute request no command field a rule could match, so
-  it always asks, and command rules apply where the command actually runs
-  (`terminal/create`).
+  target. Command rules apply where the command actually runs
+  (`terminal/create`). **An agent's own execute request is out of scope in
+  ACP v1** (decided 2026-10-17, #95): v1 gives a permission request no
+  structure for a command — what an agent sends sits in `rawInput`, whose
+  shape each agent defines (a string, an argv array, nothing), and that is
+  the agent's data, never a basis for a decision — so it always asks. The
+  adoption trigger is ACP v2's `command` subject on permission requests: a
+  shell line the same judge reads, so its arrival is wiring only.
+- **Command rules judge every command a line runs** (decided 2026-10-17,
+  #104, superseding whole-line patterns where the first match in list order
+  won). A run is read into the commands it runs (`shell-reading.ts`): plain
+  argv is one command, no shell between; a bash, sh or dash handed a script
+  is transparent — the script's commands are what run, read by tree-sitter's
+  bash grammar as WebAssembly (`@vscode/tree-sitter-wasm`, the parser Gemini
+  CLI and Codex use for this) wherever they sit: chains, pipelines, loops,
+  subshells, functions, a shell further along (`sudo bash -c …`). A part whose
+  commands can't be seen from its text asks: a computed command name, `eval`,
+  a command substitution, a shell reading its input, a script only known when
+  it runs, another shell's script — only bash is read. Two kinds of rule
+  (`command-judge.ts`): a **command** pattern over one command's whole text,
+  `*` matching anything, and a **word** — one word wherever it sits in a
+  command, the program by its own name too (`/usr/bin/sudo` holds `sudo`),
+  `*` matching within the word. A word denies or asks, never allows: a word
+  anywhere says nothing of what the command does with it (`rm -rf logs` holds
+  `logs`). Each command is judged by the workspace layer where it has an
+  answer, else the machine's, else it asks; within a layer, list order
+  decides nothing — deny beats ask beats allow. The line takes its most
+  severe command's verdict; a part that can't be seen asks, and so does a
+  line that runs nothing. A rule matches the command's words; its
+  assignments and redirects ride the trust as cwd and env do.
+- **A rule's verdict on a command shows its card** (decided 2026-10-17,
+  #95, closing the gap where a rule's allow or deny reached only the audit
+  log): settled by the rule, naming each command that set the verdict and
+  the rule that decided it with its layer; a line that asks says why — no
+  rule matched, an ask rule, a part that can't be seen. Always allow saves
+  an allow rule for each command no rule answered, exactly as it reads, and
+  is offered only where that says it: none for a part that can't be seen, a
+  command an ask rule holds (the user's own rule says ask), or a `*` a
+  pattern would read as a wildcard.
 - **A rule answers as the user; the mode is the agent's** (decided
   2026-10-08). An agent's mode decides when it asks — Codex's
   approval presets, Claude's Default vs Accept Edits. Whether the user

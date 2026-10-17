@@ -54,9 +54,10 @@ describe("reading a configuration file", () => {
     expect(r.preferences).toMatchObject({ knobSource: "last-session", idleCloseMinutes: 45 });
     // Retired since the file was written: read past, not reported unread.
     expect(r.preferences).not.toHaveProperty("statsPrompts");
+    // Written before rules had kinds: each reads as the command rule it was.
     expect(r.machineCommandRules).toEqual([
-      { pattern: "git status", verdict: "allow" },
-      { pattern: "rm -rf *", verdict: "deny" },
+      { kind: "command", pattern: "git status", verdict: "allow" },
+      { kind: "command", pattern: "rm -rf *", verdict: "deny" },
     ]);
     expect(r.machineSavedRoots).toEqual(["/home/me/notes"]);
     expect(r.secrets).toEqual({
@@ -135,7 +136,7 @@ describe("reading a configuration file", () => {
     expect(r.agents.map((a) => a.id)).toEqual(["a"]);
     expect(r.knobs).toEqual({ a: { mode: "plan" } });
     expect(r.preferences).toEqual({ soundOnDone: true });
-    expect(r.machineCommandRules).toEqual([{ pattern: "ls", verdict: "allow" }]);
+    expect(r.machineCommandRules).toEqual([{ kind: "command", pattern: "ls", verdict: "allow" }]);
     expect(r.machineWriteScope).toEqual([{ location: { kind: "temp" }, on: true }]);
     expect(r.machineSavedRoots).toEqual(["/a"]);
     expect(r.secrets).toEqual({ agents: { a: { K: "v" } }, mcpServers: {} });

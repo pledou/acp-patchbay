@@ -11,11 +11,12 @@ import { isDeepStrictEqual } from "node:util";
 import { writeLocationLabel, type KnobSeed, type PreferencesView, type WriteEntry } from "../shared/protocol";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
 import type { ConfigurationRead } from "./config-import";
-import { routingOn, writeLocationItemId, type ImportPlan } from "./config-import-plan";
+import { ruleLabel } from "../shared/command-rules";
+import { commandRuleItemId, routingOn, writeLocationItemId, type ImportPlan } from "./config-import-plan";
 import type { AgentConfig } from "./stores/agent-configs";
 import { authTypeOf, type McpServerConfig } from "./stores/mcp-server-configs";
 import type { StoredToken } from "./stores/mcp-server-tokens";
-import type { CommandRule } from "./stores/permission-rules";
+import { type CommandRule, withRule } from "./stores/permission-rules";
 import { withWriteEntry } from "./stores/write-scope";
 
 type Env = Record<string, string>;
@@ -116,12 +117,8 @@ export async function applyImport(
   if (taken("preferences")) await land("Preferences", () => targets.preferences.set(read.preferences).then(() => {}));
 
   for (const rule of read.machineCommandRules) {
-    if (!taken(`commandRule:${rule.pattern}`)) continue;
-    await land(rule.pattern, async () => {
-      const here = targets.machineRules.get().commandRules;
-      const held = here.some((r) => r.pattern === rule.pattern);
-      await targets.machineRules.set(held ? here.map((r) => (r.pattern === rule.pattern ? rule : r)) : [...here, rule]);
-    });
+    if (!taken(commandRuleItemId(rule))) continue;
+    await land(ruleLabel(rule), () => targets.machineRules.set(withRule(targets.machineRules.get().commandRules, rule)));
   }
 
   for (const { location, on } of read.machineWriteScope) {

@@ -76,9 +76,15 @@ export type AskChoice =
   | { kind: "answer"; answer: ElicitationAnswer };
 
 /** How an ask ended — what its caller answers the agent from. */
-export type AskEnding = { end: "rule" | "stop" | "withdraw" | "complete" } | { end: "user"; choice: AskChoice };
+export type AskEnding =
+  | { end: "rule"; allowed: boolean }
+  | { end: "stop" | "withdraw" | "complete" }
+  | { end: "user"; choice: AskChoice };
 
-type Move = { end: "rule" | "stop" | "withdraw" | "complete" } | { end: "user" | "linkOpened" | "linkAnswered"; choice: AskChoice };
+type Move =
+  | { end: "rule"; allowed: boolean }
+  | { end: "stop" | "withdraw" | "complete" }
+  | { end: "user" | "linkOpened" | "linkAnswered"; choice: AskChoice };
 
 /** One file's full texts in a change the user decides on, held while they
  * decide — the card shows at most a preview, the editor's diff view the
@@ -260,7 +266,13 @@ export class AsksStore {
   /** A rule allowed the ask before anyone had to answer it. */
   allow(id: PatchbayAskId): void {
     const ask = this.rows.get(id);
-    if (ask !== undefined) this.settle(ask, { end: "rule" });
+    if (ask !== undefined) this.settle(ask, { end: "rule", allowed: true });
+  }
+
+  /** A rule rejected the ask before anyone had to answer it. */
+  deny(id: PatchbayAskId): void {
+    const ask = this.rows.get(id);
+    if (ask !== undefined) this.settle(ask, { end: "rule", allowed: false });
   }
 
   /** The user picked an option on a permission or command card, or its
@@ -364,8 +376,8 @@ export class AsksStore {
     return ask?.state === "open" ? ask.proposals : [];
   }
 
-  /** A decision made before any ask was held — a rule's verdict on a
-   * command, a throwaway session's request declined — on the record only. */
+  /** A decision made with no ask held — a throwaway session's request
+   * declined — on the record only. */
   record(kind: string, subject: Readonly<Record<string, unknown>>, patchbaySessionId?: PatchbaySessionId): Promise<void> {
     return this.log({ kind, ...(patchbaySessionId === undefined ? {} : this.pairOf(patchbaySessionId)), ...subject });
   }
@@ -384,7 +396,7 @@ export class AsksStore {
     if (move.end === "linkOpened" && ask.link !== null) this.hooks.openLink?.(ask.link.href);
     if (from !== "open") return;
     this.hooks.ended?.(ask.id);
-    const ending: AskEnding = "choice" in move ? { end: "user", choice: move.choice } : { end: move.end };
+    const ending: AskEnding = "choice" in move ? { end: "user", choice: move.choice } : move;
     if (ask.subject === null) {
       ask.reply(ending);
       return;
@@ -486,7 +498,7 @@ function cardOf(ask: Ask, from: AskState, move: Move): CardEvent | null {
     return {
       kind: "diffResolved",
       ...at,
-      accepted: move.end === "rule" || (choice?.kind === "write" && choice.accepted),
+      accepted: (move.end === "rule" && move.allowed) || (choice?.kind === "write" && choice.accepted),
       auto: choice === null,
     };
   }
@@ -497,7 +509,9 @@ function cardOf(ask: Ask, from: AskState, move: Move): CardEvent | null {
       choice?.kind === "option"
         ? choice.option.label
         : move.end === "rule"
-          ? "Allowed"
+          ? move.allowed
+            ? "Allowed"
+            : "Rejected"
           : move.end === "withdraw"
             ? "Withdrawn by the agent"
             : "Cancelled — turn stopped",
@@ -513,7 +527,7 @@ function outcomeOf(move: Move): ElicitationOutcome {
 /** What the record calls an end — the names it has always used, so older
  * lines read the same. A question takes no record. */
 function recordedAs(kind: AskKind, move: Move): string {
-  if (move.end === "rule") return "auto-allow";
+  if (move.end === "rule") return move.allowed ? "auto-allow" : "auto-deny";
   if (move.end === "stop") return "turn-cancelled";
   if ("choice" in move && move.choice.kind === "option") {
     const picked = move.choice.option.kind;

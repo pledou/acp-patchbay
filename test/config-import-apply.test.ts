@@ -129,15 +129,15 @@ describe("landing an import", () => {
     const read = await golden();
     const m = machine();
     await m.stores.machineRules.set([
-      { pattern: "ls", verdict: "allow" },
-      { pattern: "git status", verdict: "ask" },
+      { kind: "command", pattern: "ls", verdict: "allow" },
+      { kind: "command", pattern: "git status", verdict: "ask" },
     ]);
     const plan = planImport(read, await m.local(), here);
-    await applyImport(read, plan, new Set(["commandRule:git status", "commandRule:rm -rf *"]), m.targets);
+    await applyImport(read, plan, new Set(["commandRule:command:git status", "commandRule:command:rm -rf *"]), m.targets);
     expect(m.stores.machineRules.get().commandRules).toEqual([
-      { pattern: "ls", verdict: "allow" },
-      { pattern: "git status", verdict: "allow" },
-      { pattern: "rm -rf *", verdict: "deny" },
+      { kind: "command", pattern: "ls", verdict: "allow" },
+      { kind: "command", pattern: "git status", verdict: "allow" },
+      { kind: "command", pattern: "rm -rf *", verdict: "deny" },
     ]);
   });
 

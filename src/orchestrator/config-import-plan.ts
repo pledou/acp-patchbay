@@ -25,7 +25,8 @@ import {
 import type { ConfigurationRead } from "./config-import";
 import type { AgentConfig } from "./stores/agent-configs";
 import { authTypeOf, type McpServerConfig } from "./stores/mcp-server-configs";
-import type { CommandRule } from "./stores/permission-rules";
+import { ruleLabel } from "../shared/command-rules";
+import { type CommandRule, sameRule } from "./stores/permission-rules";
 import { writeScopeRows } from "./stores/write-scope";
 
 type Env = Record<string, string>;
@@ -178,6 +179,7 @@ export function routingOn(routing: McpServerConfig["routing"], agentIds: Readonl
 }
 
 export const writeLocationItemId = (location: WriteLocation) => `writeLocation:${writeLocationKey(location)}`;
+export const commandRuleItemId = (rule: CommandRule) => `commandRule:${rule.kind}:${rule.pattern}`;
 
 export function planImport(read: ConfigurationRead, local: LocalConfiguration, checks: PlanChecks): ImportPlan {
   const items: ImportItemView[] = [];
@@ -242,9 +244,9 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
   }
 
   for (const rule of read.machineCommandRules) {
-    const mine = local.machineCommandRules.find((r) => r.pattern === rule.pattern);
+    const mine = local.machineCommandRules.find((r) => sameRule(r, rule));
     const differs = mine === undefined || mine.verdict === rule.verdict ? [] : [`${mine.verdict} here, ${rule.verdict} in the file`];
-    items.push({ id: `commandRule:${rule.pattern}`, part: "settings", kind: "commandRule", label: rule.pattern, fate: fateOf(mine, differs), differs, flags: [] });
+    items.push({ id: commandRuleItemId(rule), part: "settings", kind: "commandRule", label: ruleLabel(rule), fate: fateOf(mine, differs), differs, flags: [] });
   }
 
   // Set against this machine's answer as it holds — its default where it

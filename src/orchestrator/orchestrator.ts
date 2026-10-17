@@ -81,7 +81,8 @@ import { McpServerTokenStore } from "./stores/mcp-server-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { DefaultAgentFoldStore } from "./stores/default-agent-fold";
-import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
+import { type CommandRule, MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
+import { ShellReader } from "./shell-reading";
 import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "./stores/write-scope";
 import { SavedRootsStore } from "./stores/saved-roots";
 import { SECRET_FAMILIES } from "./stores/storage-keys";
@@ -127,6 +128,9 @@ export interface OrchestratorPlace {
   workspaceCwd: string;
   /** The bundled scripts an agent spawns as MCP servers. */
   scripts: { editorServer: string; bridge: string };
+  /** The folder holding the bash grammar the command rules read lines
+   * with (`tree-sitter.wasm`, `tree-sitter-bash.wasm`). */
+  shellGrammar: string;
   /** The name of the IPC host's socket — one per window. */
   ipcName: string;
 }
@@ -723,6 +727,7 @@ export class Orchestrator {
       this.asks,
       (patchbaySessionId) => this.sessions.grantedRoots(patchbaySessionId),
       (text) => this.wireLog.redact(text),
+      new ShellReader(place.shellGrammar),
       this.machinePermissionRules,
       this.machineWriteScope,
       (path) => this.ports.readTextFileLive(path),
@@ -1283,6 +1288,17 @@ export class Orchestrator {
 
   private writeScopeView(): WriteScopeView {
     return { rows: writeScopeRows(this.machineWriteScope.get(), this.permissionRules.get().writeScope), tempDir: tmpdir() };
+  }
+
+  /** One layer's command rules, changed through that layer's store, then
+   * shown. */
+  async setCommandRules(layer: "workspace" | "machine", change: (rules: readonly CommandRule[]) => CommandRule[]): Promise<void> {
+    if (layer === "machine") await this.machinePermissionRules.set(change(this.machinePermissionRules.get().commandRules));
+    else {
+      const rules = this.permissionRules.get();
+      await this.permissionRules.set({ ...rules, commandRules: change(rules.commandRules) });
+    }
+    this.publishRules();
   }
 
   /** One place's answer at one layer, written through that layer's store. */

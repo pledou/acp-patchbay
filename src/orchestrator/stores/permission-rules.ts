@@ -7,12 +7,13 @@
 // repo must not arrive pre-authorized. Machine layer: command rules
 // (MachineRulesStore) and file-write places (write-scope.ts), in the
 // machine store — developer-owned defaults for every workspace ("allow
-// `npm test` everywhere"). Evaluation order is workspace first, then
-// machine, then ask (broker.ts): a workspace can tighten or loosen its own
-// floor, and the repo still can't grant anything — the machine layer never
-// rides it.
+// `npm test` everywhere"). Each command is judged by the workspace layer
+// first, then the machine's, then asks (command-judge.ts): a workspace can
+// tighten or loosen its own floor, and the repo still can't grant anything
+// — the machine layer never rides it. Within a layer, list order decides
+// nothing: deny beats ask beats allow.
 import { z } from "zod";
-import type { WriteEntry } from "../../shared/protocol";
+import type { CommandRuleView, WriteEntry } from "../../shared/protocol";
 import type { KV, StoredEntry } from "./kv";
 import { readWriteEntries } from "./write-scope";
 import { STORAGE_KEYS } from "./storage-keys";
@@ -20,12 +21,27 @@ import { STORAGE_KEYS } from "./storage-keys";
 const ruleVerdictSchema = z.enum(["allow", "ask", "deny"]);
 export type RuleVerdict = z.infer<typeof ruleVerdictSchema>;
 
-export interface CommandRule {
-  pattern: string; // glob-ish command pattern, e.g. "npm run *"
-  verdict: RuleVerdict;
+/** As Settings shows it (CommandRuleView): a pattern over a command's
+ * whole text, `*` matching anything — "npm run *" — or one word wherever
+ * it sits in a command, `*` matching within the word — "sudo", "--watch".
+ * A word can deny or ask, never allow: a word anywhere in a command says
+ * nothing of what the command does with it (`rm -rf logs` holds `logs`). */
+export type CommandRule = CommandRuleView;
+
+const commandRuleSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("command"), pattern: z.string().min(1), verdict: ruleVerdictSchema }),
+  z.object({ kind: z.literal("word"), pattern: z.string().regex(/^\S+$/), verdict: z.enum(["ask", "deny"]) }),
+]);
+
+/** One rule per kind and pattern in a layer: a rule is named by both. */
+export function sameRule(a: Pick<CommandRule, "kind" | "pattern">, b: Pick<CommandRule, "kind" | "pattern">): boolean {
+  return a.kind === b.kind && a.pattern === b.pattern;
 }
 
-const commandRuleSchema = z.object({ pattern: z.string().min(1), verdict: ruleVerdictSchema });
+/** `rules` with `rule` in place of the one it names, or added. */
+export function withRule(rules: readonly CommandRule[], rule: CommandRule): CommandRule[] {
+  return rules.some((r) => sameRule(r, rule)) ? rules.map((r) => (sameRule(r, rule) ? rule : r)) : [...rules, rule];
+}
 
 /** The stored rules that are rules: anything else in the list — or a
  * stored value that isn't a list — is skipped, never trusted blind. */
@@ -35,6 +51,19 @@ function readRules(stored: unknown): CommandRule[] {
     const parsed = commandRuleSchema.safeParse(rule);
     return parsed.success ? [parsed.data] : [];
   });
+}
+
+/** Rules stored before rules had kinds were all patterns over the
+ * command: each gains its kind; anything else stays as it was. */
+function withKinds(stored: unknown): unknown {
+  if (!Array.isArray(stored)) return stored;
+  return stored.map((rule) =>
+    typeof rule === "object" && rule !== null && !("kind" in rule) ? { kind: "command", ...rule } : rule,
+  );
+}
+
+function kindless(stored: unknown): boolean {
+  return Array.isArray(stored) && stored.some((rule) => typeof rule === "object" && rule !== null && !("kind" in rule));
 }
 
 export interface PermissionRules {
@@ -67,10 +96,15 @@ export class PermissionRulesStore {
     // Once, at construction: a KV applies an update in memory before its
     // write settles, so no read ever sees the old shape. A choice this
     // version doesn't know reads as the default did.
-    const stored = kv.get<unknown>(KEY);
+    let stored = kv.get<unknown>(KEY);
     if (typeof stored === "object" && stored !== null && "fileWriteScope" in stored) {
       const { fileWriteScope, ...rest } = stored as Record<string, unknown>;
-      void kv.update(KEY, { ...rest, writeScope: LEGACY_SCOPE.get(fileWriteScope) ?? [] });
+      stored = { ...rest, writeScope: LEGACY_SCOPE.get(fileWriteScope) ?? [] };
+      void kv.update(KEY, stored);
+    }
+    if (typeof stored === "object" && stored !== null && kindless((stored as Record<string, unknown>).commandRules)) {
+      const held = stored as Record<string, unknown>;
+      void kv.update(KEY, { ...held, commandRules: withKinds(held.commandRules) });
     }
   }
 
@@ -98,7 +132,11 @@ const MACHINE_KEY = STORAGE_KEYS.machineCommandRules;
 export class MachineRulesStore implements StoredEntry {
   readonly key = MACHINE_KEY;
 
-  constructor(private readonly kv: KV) {}
+  constructor(private readonly kv: KV) {
+    // Once, at construction, as the workspace layer's.
+    const stored = kv.get<unknown>(MACHINE_KEY);
+    if (kindless(stored)) void kv.update(MACHINE_KEY, withKinds(stored));
+  }
 
   stored(): unknown {
     return this.kv.get(MACHINE_KEY);

@@ -47,6 +47,7 @@ export function formatCommandLine(command: string, args: readonly string[]): str
   return [command, ...args].map(quoteArg).join(" ");
 }
 
-function quoteArg(arg: string): string {
+/** One argument as `formatCommandLine` writes it. */
+export function quoteArg(arg: string): string {
   return arg !== "" && !/[\s"']/.test(arg) ? arg : `"${arg.replaceAll('"', `"'"'"`)}"`;
 }

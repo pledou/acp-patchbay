@@ -114,8 +114,8 @@ async function machine() {
   await mcpServerEnv.set("local", { TOKEN: "t-1" });
   await preferences.set({ statsToolCalls: false, knobSource: "last-session", idleCloseMinutes: 45 });
   await machineRules.set([
-    { pattern: "git status", verdict: "allow" },
-    { pattern: "rm -rf *", verdict: "deny" },
+    { kind: "command", pattern: "git status", verdict: "allow" },
+    { kind: "command", pattern: "rm -rf *", verdict: "deny" },
   ]);
   await machineWriteScope.set([{ location: { kind: "path", path: "/home/me/.hermes" }, on: true }]);
   await machineRoots.add("/home/me/notes");

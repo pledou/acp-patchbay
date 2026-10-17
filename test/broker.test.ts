@@ -14,6 +14,8 @@ import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { MachineWriteScopeStore } from "../src/orchestrator/stores/write-scope";
+import { ShellReader } from "../src/orchestrator/shell-reading";
+import { SHELL_GRAMMAR } from "./support/shell-grammar";
 import type { AgentViewEvent, PermissionCallView, PermissionOptionView, ToolCallKind } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
@@ -33,6 +35,10 @@ beforeEach(async () => {
 
 /** A value patchbay handed an agent — masked wherever a card shows it. */
 const HANDED_OUT = "sk-handed-out-token";
+
+const reader = new ShellReader(SHELL_GRAMMAR);
+const allow = (pattern: string) => ({ kind: "command" as const, pattern, verdict: "allow" as const });
+const deny = (pattern: string) => ({ kind: "command" as const, pattern, verdict: "deny" as const });
 
 /** A terminal/create as the gate receives it: the command line read the
  * way a person writes it, run in the workspace, nothing set. */
@@ -59,73 +65,56 @@ function harness() {
     openLink: (href) => opened.push(href),
   });
   const roots = () => ({ workspace: granted, added });
-  const broker = new PermissionBroker(rules, asks, roots, (text) => text.split(HANDED_OUT).join("•••"), machineRules, machineWriteScope);
+  const broker = new PermissionBroker(rules, asks, roots, (text) => text.split(HANDED_OUT).join("•••"), reader, machineRules, machineWriteScope);
   return { broker, asks, roots, rules, machineRules, machineWriteScope, audit, events, opened, refreshCount: () => auditRefreshes };
 }
 
-describe("PermissionBroker.evaluateCommand", () => {
-  it("returns ask when no rule matches — never a silent allow", () => {
+describe("PermissionBroker.judgeLine", () => {
+  const verdictOf = async (broker: PermissionBroker, line: string) => (await broker.judgeLine(line)).verdict;
+
+  it("returns ask when no rule matches — never a silent allow", async () => {
     const { broker } = harness();
-    expect(broker.evaluateCommand("rm -rf /")).toBe("ask");
+    expect(await verdictOf(broker, "rm -rf /")).toBe("ask");
   });
 
   it("matches glob patterns", async () => {
     const { broker, rules } = harness();
-    await rules.set({
-      commandRules: [{ pattern: "npm run *", verdict: "allow" }],
-      writeScope: [],
-    });
-    expect(broker.evaluateCommand("npm run build")).toBe("allow");
-    expect(broker.evaluateCommand("npm test")).toBe("ask");
+    await rules.set({ commandRules: [allow("npm run *")], writeScope: [] });
+    expect(await verdictOf(broker, "npm run build")).toBe("allow");
+    expect(await verdictOf(broker, "npm test")).toBe("ask");
   });
 
-  it("rule precedence: first matching rule wins, in list order", async () => {
+  // #95: a deny added after an overlapping allow used to be shadowed by it.
+  it("within a layer the list order decides nothing — a later deny beats an earlier allow", async () => {
     const { broker, rules } = harness();
-    await rules.set({
-      commandRules: [
-        { pattern: "git push *", verdict: "ask" },
-        { pattern: "git *", verdict: "allow" },
-      ],
-      writeScope: [],
-    });
-    expect(broker.evaluateCommand("git push origin main")).toBe("ask");
-    expect(broker.evaluateCommand("git status")).toBe("allow");
-  });
-
-  it("deny rules are honored", async () => {
-    const { broker, rules } = harness();
-    await rules.set({
-      commandRules: [{ pattern: "rm -rf *", verdict: "deny" }],
-      writeScope: [],
-    });
-    expect(broker.evaluateCommand("rm -rf /tmp/x")).toBe("deny");
+    await rules.set({ commandRules: [allow("npm *"), deny("npm publish*")], writeScope: [] });
+    expect(await verdictOf(broker, "npm publish")).toBe("deny");
+    expect(await verdictOf(broker, "npm test")).toBe("allow");
   });
 
   it("machine layer answers only where the workspace layer stays silent", async () => {
     const { broker, machineRules } = harness();
-    await machineRules.set([{ pattern: "npm test", verdict: "allow" }]);
-    // no workspace rule matches → the machine floor answers
-    expect(broker.evaluateCommand("npm test")).toBe("allow");
-    // machine layer silent too → ask
-    expect(broker.evaluateCommand("rm -rf /")).toBe("ask");
+    await machineRules.set([allow("npm test")]);
+    expect(await verdictOf(broker, "npm test")).toBe("allow");
+    expect(await verdictOf(broker, "rm -rf /")).toBe("ask");
   });
 
   it("a workspace rule beats the machine floor wherever both match — tighten or loosen", async () => {
     const { broker, rules, machineRules } = harness();
-    await machineRules.set([
-      { pattern: "npm *", verdict: "allow" },
-      { pattern: "./deploy.sh", verdict: "deny" },
-    ]);
-    await rules.set({
-      commandRules: [
-        { pattern: "npm publish*", verdict: "deny" }, // tighten the machine allow
-        { pattern: "./deploy.sh", verdict: "allow" }, // loosen the machine deny, this repo only
-      ],
-      writeScope: [],
-    });
-    expect(broker.evaluateCommand("npm publish --tag next")).toBe("deny");
-    expect(broker.evaluateCommand("npm run build")).toBe("allow"); // machine floor still covers the rest
-    expect(broker.evaluateCommand("./deploy.sh")).toBe("allow");
+    await machineRules.set([allow("npm *"), deny("./deploy.sh")]);
+    await rules.set({ commandRules: [deny("npm publish*"), allow("./deploy.sh")], writeScope: [] });
+    expect(await verdictOf(broker, "npm publish --tag next")).toBe("deny");
+    expect(await verdictOf(broker, "npm run build")).toBe("allow");
+    expect(await verdictOf(broker, "./deploy.sh")).toBe("allow");
+  });
+
+  it("a draft rule is judged as if added at its layer — and nothing is stored", async () => {
+    const { broker, rules, machineRules } = harness();
+    await machineRules.set([allow("npm *")]);
+    const draft = { rule: { kind: "word" as const, pattern: "publish", verdict: "deny" as const }, layer: "machine" as const };
+    expect((await broker.judgeLine("npm publish", draft)).commands[0]).toMatchObject({ verdict: "deny", by: draft });
+    expect(machineRules.get().commandRules).toEqual([allow("npm *")]);
+    expect(rules.get().commandRules).toEqual([]);
   });
 });
 
@@ -172,7 +161,7 @@ describe("PermissionBroker.evaluateFileWrites", () => {
     await mkdir(infra);
     const here = harness();
     // another workspace on the same machine: its own rules, the machine's places
-    const elsewhere = new PermissionBroker(new PermissionRulesStore(new MemoryKV()), here.asks, here.roots, (text) => text, null, here.machineWriteScope);
+    const elsewhere = new PermissionBroker(new PermissionRulesStore(new MemoryKV()), here.asks, here.roots, (text) => text, reader, null, here.machineWriteScope);
     await here.rules.set({ commandRules: [], writeScope: [{ location: { kind: "path", path: infra }, on: true }] });
     expect(await here.broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(infra, "main.tf")])).toBe("allow");
     expect(await elsewhere.evaluateFileWrites("s1" as PatchbaySessionId, [join(infra, "main.tf")])).toBe("ask");
@@ -374,12 +363,9 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
 });
 
 describe("PermissionBroker audit trail", () => {
-  it("auto-allow via rule writes an audit entry immediately", async () => {
+  it("auto-allow via rule writes an audit entry", async () => {
     const { broker, rules, audit, refreshCount } = harness();
-    await rules.set({
-      commandRules: [{ pattern: "npm run *", verdict: "allow" }],
-      writeScope: [],
-    });
+    await rules.set({ commandRules: [allow("npm run *")], writeScope: [] });
     const result = await broker.gateCommand("s1" as PatchbaySessionId, run("npm run build"));
     expect(result).toBe("accepted");
     expect(refreshCount()).toBe(1);
@@ -393,10 +379,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("auto-deny via rule writes an audit entry and rejects", async () => {
     const { broker, rules, audit } = harness();
-    await rules.set({
-      commandRules: [{ pattern: "rm -rf *", verdict: "deny" }],
-      writeScope: [],
-    });
+    await rules.set({ commandRules: [deny("rm -rf *")], writeScope: [] });
     const result = await broker.gateCommand("s1" as PatchbaySessionId, run("rm -rf /"));
     expect(result).toBe("rejected");
     const tail = await audit.tail(10);
@@ -406,13 +389,8 @@ describe("PermissionBroker audit trail", () => {
   it("an ask that the user resolves also writes an audit entry", async () => {
     const { broker, asks, events, audit } = harness();
     const pending = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
-    // the permission card was emitted with a patchbayAskId — resolve it
-    const requested = events.find((e) => e.kind === "permissionRequested");
-    expect(requested).toBeDefined();
-    if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
-    asks.answerOption(requested.patchbayAskId, "allow_once");
-    const result = await pending;
-    expect(result).toBe("accepted");
+    asks.answerOption((await cardOf(events, pending)).patchbayAskId, "allow_once");
+    await expect(pending).resolves.toBe("accepted");
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "user-allow", command: "curl example.com" });
   });
@@ -420,9 +398,7 @@ describe("PermissionBroker audit trail", () => {
   it("a command the user rejects on its card settles rejected", async () => {
     const { broker, asks, events, audit } = harness();
     const pending = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
-    const requested = events.find((e) => e.kind === "permissionRequested");
-    if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
-    asks.answerOption(requested.patchbayAskId, "reject_once");
+    asks.answerOption((await cardOf(events, pending)).patchbayAskId, "reject_once");
     await expect(pending).resolves.toBe("rejected");
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "user-reject", command: "curl example.com" });
@@ -441,7 +417,7 @@ describe("PermissionBroker audit trail", () => {
     );
     const commandGate = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
     const otherSession = broker.gateCommand("s2" as PatchbaySessionId, run("npm run lint"));
-    // the agent's request is judged before its card shows
+    // each is judged before its card shows
     await vi.waitFor(() => expect(events.filter((e) => e.kind === "permissionRequested")).toHaveLength(3), SETTLE);
 
     asks.stopSession("s1" as PatchbaySessionId);
@@ -469,50 +445,44 @@ describe("PermissionBroker audit trail", () => {
     const options = [{ optionId: "y", label: "Allow", kind: "allow_once" as const }];
     const agentReq = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Edit", "edit", [join(workspaceRoot, "a.ts")], options));
     const write = broker.gateFileWrite("s1" as PatchbaySessionId, join(workspaceRoot, "b.ts"), "x");
-    asks.stopSession("s1" as PatchbaySessionId); // before either judge has read the disk
+    const command = broker.gateCommand("s1" as PatchbaySessionId, run("bash -c ls"));
+    asks.stopSession("s1" as PatchbaySessionId); // before any judge has read the disk, or the line
     await expect(agentReq).resolves.toEqual({ cancelled: true });
     await expect(write).resolves.toBe("cancelled");
+    await expect(command).resolves.toBe("cancelled");
     expect(events).toEqual([]);
     const tail = await audit.tail(10);
-    expect(tail.filter((e) => e.kind === "turn-cancelled")).toHaveLength(2);
+    expect(tail.filter((e) => e.kind === "turn-cancelled")).toHaveLength(3);
   });
 
   it("allow_always persists a new rule so the next call auto-allows", async () => {
     const { broker, asks, events, rules } = harness();
     const pending = broker.gateCommand("s1" as PatchbaySessionId, run("npm run lint"));
-    const requested = events.find((e) => e.kind === "permissionRequested");
-    if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
-    asks.answerOption(requested.patchbayAskId, "allow_always");
+    asks.answerOption((await cardOf(events, pending)).patchbayAskId, "allow_always");
     await pending;
-    expect(rules.get().commandRules).toContainEqual({ pattern: "npm run lint", verdict: "allow" });
+    expect(rules.get().commandRules).toEqual([allow("npm run lint")]);
 
-    // second call for the same command now auto-allows, no card
-    const events2Before = events.length;
-    const second = await broker.gateCommand("s1" as PatchbaySessionId, run("npm run lint"));
-    expect(second).toBe("accepted");
-    expect(events.slice(events2Before).some((e) => e.kind === "permissionRequested")).toBe(false);
+    // the same command again is allowed by that rule, its card settled at once
+    events.length = 0;
+    await expect(broker.gateCommand("s1" as PatchbaySessionId, run("npm run lint"))).resolves.toBe("accepted");
+    expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Allowed", auto: true });
   });
 });
 
 describe("PermissionBroker.gateCommand — the card shows what will run (issue #57)", () => {
-  const card = (events: AgentViewEvent[]) => {
-    const asked = events.find((e) => e.kind === "permissionRequested");
-    if (asked?.kind !== "permissionRequested") throw new Error("no card");
-    return asked;
-  };
-
   it("lists the directory and every variable the agent sets, a handed-out value masked", async () => {
     const { broker, asks, events } = harness();
     const gated = broker.gateCommand(
       "s1" as PatchbaySessionId,
       run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js", API_KEY: HANDED_OUT } }),
     );
-    expect(card(events)).toMatchObject({
+    expect(await cardOf(events, gated)).toMatchObject({
       detail: "npm test",
       facts: [
         { label: "cwd", value: "/elsewhere" },
         { label: "env", value: "NODE_OPTIONS=--require ./x.js" },
         { label: "env", value: "API_KEY=•••" },
+        { label: "asks", value: "npm test — no rule matched" },
       ],
     });
     asks.stopSession("s1" as PatchbaySessionId);
@@ -524,29 +494,107 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
   it("keeps argument boundaries: `rm \"a b\"` is never `rm a b`, on the card or to a rule", async () => {
     const { broker, asks, events, rules } = harness();
     const pending = broker.gateCommand("s1" as PatchbaySessionId, run('rm "a b"'));
-    expect(card(events).detail).toBe('rm "a b"');
-    asks.answerOption(card(events).patchbayAskId, "allow_always");
+    const asked = await cardOf(events, pending);
+    expect(asked.detail).toBe('rm "a b"');
+    asks.answerOption(asked.patchbayAskId, "allow_always");
     await pending;
-    expect(rules.get().commandRules).toContainEqual({ pattern: 'rm "a b"', verdict: "allow" });
-    expect(broker.evaluateCommand('rm "a b"')).toBe("allow");
-    expect(broker.evaluateCommand("rm a b")).toBe("ask");
+    expect(rules.get().commandRules).toEqual([allow('rm "a b"')]);
+    expect((await broker.judgeLine('rm "a b"')).verdict).toBe("allow");
+    expect((await broker.judgeLine("rm a b")).verdict).toBe("ask");
   });
 
   it("a rule speaks for the command line alone — its directory and environment ride the trust", async () => {
-    const { broker, rules, events } = harness();
-    await rules.set({ commandRules: [{ pattern: "npm test", verdict: "allow" }], writeScope: [] });
+    const { broker, rules } = harness();
+    await rules.set({ commandRules: [allow("npm test")], writeScope: [] });
     const other = run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js" } });
     await expect(broker.gateCommand("s1" as PatchbaySessionId, other)).resolves.toBe("accepted");
-    expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
   });
 
   it("the audit names the variables, never their values", async () => {
     const { broker, rules, audit } = harness();
-    await rules.set({ commandRules: [{ pattern: "npm test", verdict: "allow" }], writeScope: [] });
+    await rules.set({ commandRules: [allow("npm test")], writeScope: [] });
     await broker.gateCommand("s1" as PatchbaySessionId, run("npm test", { env: { API_KEY: HANDED_OUT } }));
     const [entry] = await audit.tail(1);
     expect(entry).toMatchObject({ kind: "auto-allow", command: "npm test", cwd: workspaceRoot, env: ["API_KEY"] });
     expect(JSON.stringify(entry)).not.toContain(HANDED_OUT);
+  });
+});
+
+// #95: a rule's decision used to reach only the audit log — the card shows
+// either way, settled by the rule, naming it and the command it decided.
+describe("PermissionBroker.gateCommand — a rule's verdict shows its card", () => {
+  const word = (pattern: string) => ({ kind: "word" as const, pattern, verdict: "deny" as const });
+
+  it("an allowed run settles its card at once, naming each command's rule", async () => {
+    const { broker, rules, machineRules, events } = harness();
+    await rules.set({ commandRules: [allow("npm test")], writeScope: [] });
+    await machineRules.set([allow("git status")]);
+    await expect(broker.gateCommand("s1" as PatchbaySessionId, run('bash -c "npm test && git status"'))).resolves.toBe("accepted");
+    expect(events.find((e) => e.kind === "permissionRequested")).toMatchObject({
+      detail: 'bash -c "npm test && git status"',
+      facts: [
+        { label: "cwd", value: workspaceRoot },
+        { label: "allowed", value: "npm test — npm test (workspace)" },
+        { label: "allowed", value: "git status — git status (machine)" },
+      ],
+    });
+    expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Allowed", auto: true });
+  });
+
+  it("a rejected run settles its card rejected, naming the command and the rule", async () => {
+    const { broker, rules, machineRules, events } = harness();
+    await rules.set({ commandRules: [allow("*")], writeScope: [] });
+    await machineRules.set([word("sudo")]);
+    // the workspace's allow-all decides here — the machine's word never speaks
+    await expect(broker.gateCommand("s1" as PatchbaySessionId, run('bash -c "ls && sudo rm x"'))).resolves.toBe("accepted");
+    events.length = 0;
+    await rules.set({ commandRules: [allow("ls"), word("sudo")], writeScope: [] });
+    await expect(broker.gateCommand("s1" as PatchbaySessionId, run('bash -c "ls && sudo rm x"'))).resolves.toBe("rejected");
+    expect(events.find((e) => e.kind === "permissionRequested")).toMatchObject({
+      facts: [
+        { label: "cwd", value: workspaceRoot },
+        { label: "rejected", value: "sudo rm x — word sudo (workspace)" },
+      ],
+    });
+    expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Rejected", auto: true });
+  });
+
+  it("a line that asks says why: the commands no rule answered, and what can't be seen", async () => {
+    const { broker, asks, events, rules } = harness();
+    await rules.set({ commandRules: [allow("echo *")], writeScope: [] });
+    const pending = broker.gateCommand("s1" as PatchbaySessionId, run('bash -c "echo $(id) && make"'));
+    const asked = await cardOf(events, pending);
+    expect(asked.facts).toEqual([
+      { label: "cwd", value: workspaceRoot },
+      { label: "asks", value: "make — no rule matched" },
+      { label: "asks", value: "$(id) — a command substitution — its output is only known when it runs" },
+    ]);
+    // nothing a rule could say exactly — no Always
+    expect(asked.options.map((o) => o.kind)).toEqual(["allow_once", "reject_once"]);
+    asks.answerOption(asked.patchbayAskId, "allow_once");
+    await expect(pending).resolves.toBe("accepted");
+  });
+
+  it("Always allow saves each command no rule answered, exactly — the line's other commands keep their rules", async () => {
+    const { broker, asks, events, rules } = harness();
+    await rules.set({ commandRules: [allow("npm test")], writeScope: [] });
+    const pending = broker.gateCommand("s1" as PatchbaySessionId, run('bash -c "npm test && make dist && make check"'));
+    asks.answerOption((await cardOf(events, pending)).patchbayAskId, "allow_always");
+    await expect(pending).resolves.toBe("accepted");
+    expect(rules.get().commandRules).toEqual([allow("npm test"), allow("make dist"), allow("make check")]);
+  });
+
+  it("no Always where a saved rule couldn't say the command: an ask rule holds it, or a `*` would read as a wildcard", async () => {
+    const { broker, asks, events, rules } = harness();
+    await rules.set({ commandRules: [{ kind: "command", pattern: "git push*", verdict: "ask" }], writeScope: [] });
+    for (const line of ["git push", "rm *.log"]) {
+      events.length = 0;
+      const pending = broker.gateCommand("s1" as PatchbaySessionId, run(line));
+      const asked = await cardOf(events, pending);
+      expect(asked.options.map((o) => o.kind)).toEqual(["allow_once", "reject_once"]);
+      asks.answerOption(asked.patchbayAskId, "reject_once");
+      await pending;
+    }
   });
 });
 

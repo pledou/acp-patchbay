@@ -25,6 +25,7 @@ import {
   DEFAULT_PERMISSION_RULES,
   MachineRulesStore,
   PermissionRulesStore,
+  withRule,
 } from "../src/orchestrator/stores/permission-rules";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "../src/orchestrator/stores/write-scope";
@@ -143,7 +144,7 @@ describe("PermissionRulesStore", () => {
   it("stored rules override defaults", async () => {
     const store = new PermissionRulesStore(new MemoryKV());
     await store.set({
-      commandRules: [{ pattern: "npm run *", verdict: "allow" }],
+      commandRules: [{ kind: "command", pattern: "npm run *", verdict: "allow" }],
       writeScope: [{ location: { kind: "alwaysAsk" }, on: true }],
     });
     expect(store.get().commandRules).toHaveLength(1);
@@ -163,7 +164,7 @@ describe("PermissionRulesStore", () => {
     ];
     for (const [fileWriteScope, writeScope] of cases) {
       const kv = new MemoryKV();
-      const commandRules = [{ pattern: "npm test", verdict: "allow" }];
+      const commandRules = [{ kind: "command", pattern: "npm test", verdict: "allow" }];
       void kv.update(STORAGE_KEYS.permissionRules, { commandRules, fileWriteScope });
       expect(new PermissionRulesStore(kv).get()).toEqual({ commandRules, writeScope });
       expect(kv.get(STORAGE_KEYS.permissionRules)).toEqual({ commandRules, writeScope });
@@ -173,11 +174,11 @@ describe("PermissionRulesStore", () => {
   it("each half stored in a shape this version doesn't take reads as its default; a stray rule is skipped", () => {
     const kv = new MemoryKV();
     void kv.update(STORAGE_KEYS.permissionRules, {
-      commandRules: [{ pattern: "npm test", verdict: "allow" }, { pattern: "x", verdict: "maybe" }],
+      commandRules: [{ kind: "command", pattern: "npm test", verdict: "allow" }, { kind: "command", pattern: "x", verdict: "maybe" }],
       writeScope: "anywhere",
     });
     expect(new PermissionRulesStore(kv).get()).toEqual({
-      commandRules: [{ pattern: "npm test", verdict: "allow" }],
+      commandRules: [{ kind: "command", pattern: "npm test", verdict: "allow" }],
       writeScope: DEFAULT_PERMISSION_RULES.writeScope,
     });
     void kv.update(STORAGE_KEYS.permissionRules, "always-ask");
@@ -191,17 +192,52 @@ describe("MachineRulesStore", () => {
   it("a stored rule that isn't one is skipped; the rest hold", () => {
     const kv = new MemoryKV();
     void kv.update(STORAGE_KEYS.machineCommandRules, [
-      { pattern: "git status", verdict: "allow" },
-      { pattern: "", verdict: "allow" },
-      { pattern: "rm *", verdict: "maybe" },
+      { kind: "command", pattern: "git status", verdict: "allow" },
+      { kind: "command", pattern: "", verdict: "allow" },
+      { kind: "command", pattern: "rm *", verdict: "maybe" },
       "npm test",
       null,
     ]);
-    expect(new MachineRulesStore(kv).get().commandRules).toEqual([{ pattern: "git status", verdict: "allow" }]);
+    expect(new MachineRulesStore(kv).get().commandRules).toEqual([{ kind: "command", pattern: "git status", verdict: "allow" }]);
+  });
+
+  it("a word rule is one word that denies or asks — an allow, or a space, is no word rule", () => {
+    const kv = new MemoryKV();
+    void kv.update(STORAGE_KEYS.machineCommandRules, [
+      { kind: "word", pattern: "sudo", verdict: "deny" },
+      { kind: "word", pattern: "--watch", verdict: "ask" },
+      { kind: "word", pattern: "logs", verdict: "allow" },
+      { kind: "word", pattern: "rm -rf", verdict: "deny" },
+      { kind: "word", pattern: "", verdict: "deny" },
+    ]);
+    expect(new MachineRulesStore(kv).get().commandRules).toEqual([
+      { kind: "word", pattern: "sudo", verdict: "deny" },
+      { kind: "word", pattern: "--watch", verdict: "ask" },
+    ]);
+  });
+
+  // Every rule stored before rules had kinds matched the whole command.
+  it("rules stored without a kind become command rules, once, in both layers", () => {
+    const machineKv = new MemoryKV();
+    void machineKv.update(STORAGE_KEYS.machineCommandRules, [{ pattern: "git status", verdict: "allow" }, "junk"]);
+    new MachineRulesStore(machineKv);
+    expect(machineKv.get(STORAGE_KEYS.machineCommandRules)).toEqual([{ kind: "command", pattern: "git status", verdict: "allow" }, "junk"]);
+    const workspaceKv = new MemoryKV();
+    void workspaceKv.update(STORAGE_KEYS.permissionRules, { commandRules: [{ pattern: "npm *", verdict: "deny" }], writeScope: [] });
+    expect(new PermissionRulesStore(workspaceKv).get().commandRules).toEqual([{ kind: "command", pattern: "npm *", verdict: "deny" }]);
+    expect(workspaceKv.get(STORAGE_KEYS.permissionRules)).toEqual({ commandRules: [{ kind: "command", pattern: "npm *", verdict: "deny" }], writeScope: [] });
+  });
+
+  it("a rule is named by its kind and pattern: the same one replaces its verdict, the other kind joins", () => {
+    const rules = withRule([{ kind: "command", pattern: "sudo", verdict: "allow" }], { kind: "word", pattern: "sudo", verdict: "deny" });
+    expect(withRule(rules, { kind: "command", pattern: "sudo", verdict: "ask" })).toEqual([
+      { kind: "command", pattern: "sudo", verdict: "ask" },
+      { kind: "word", pattern: "sudo", verdict: "deny" },
+    ]);
   });
 
   it("a stored value that isn't a list holds no rules", () => {
-    for (const junk of ["git status", 42, { pattern: "x", verdict: "allow" }, null]) {
+    for (const junk of ["git status", 42, { kind: "command", pattern: "x", verdict: "allow" }, null]) {
       const kv = new MemoryKV();
       void kv.update(STORAGE_KEYS.machineCommandRules, junk);
       expect(new MachineRulesStore(kv).get().commandRules).toEqual([]);
