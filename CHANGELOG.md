@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.88.2 — 2026-10-21
+
+Security updates to the tools that build and test Patchbay; nothing you
+run changes.
+
+- **The build and test toolchain is past its security advisories.** The
+  packages flagged — hono, vite, markdown-it and braces — were never in
+  the extension you install; they sat in the tools that package and test
+  it, now updated past each advisory. The one change inside the
+  extension is its schema-validation library, zod, moving from 4.4 to
+  4.6.
+
 ## 0.88.1 — 2026-10-21
 
 One fix: text you select copies again — in the chat, its error pages and
