@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Copying selected text copies it.** Text you selected — in the chat, on
+  its error pages, in Settings — copied as nothing, by Ctrl+C or
+  right-click › Copy alike, and the cursor jumped into the prompt box or
+  the last field you typed in. Before copying, VS Code puts focus back
+  where it last was, and putting it in a text field cleared the
+  selection. A press anywhere now keeps focus where you pressed, so what
+  you selected is what you copy — and the keys that scroll what you
+  pressed still scroll it. (#118)
+
 ## 0.88.0 — 2026-10-17
 
 Permissions, reworked: every command a line runs is judged, with word rules and
