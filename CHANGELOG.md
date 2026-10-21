@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.88.1 — 2026-10-21
+
+One fix: text you select copies again — in the chat, its error pages and
+Settings (#118).
 
 - **Copying selected text copies it.** Text you selected — in the chat, on
   its error pages, in Settings — copied as nothing, by Ctrl+C or
