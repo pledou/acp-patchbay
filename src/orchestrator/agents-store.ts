@@ -742,8 +742,8 @@ export class AgentsStore implements ConnectionOperations {
       env: {},
       cwd: this.deps.workspaceCwd,
       defaults: agent.defaults.options ?? {},
-      ...(source?.distributionKind === "binary" && source.binary !== undefined
-        ? { binary: { ...source.binary, distribution: source.registryId, version: source.pinnedVersion } }
+      ...(source?.distributionKind === "binary" && source.distribution !== undefined
+        ? { binary: archiveFacts(source.registryId, source.pinnedVersion, source.distribution) }
         : {}),
     };
   }
@@ -754,8 +754,9 @@ export class AgentsStore implements ConnectionOperations {
    * facts for the connect's launch phase to acquire, on the card, behind
    * the download confirmation. `command` for a binary is the cached path
    * the phase will resolve to — deterministic, so the config is honest
-   * before anything is downloaded. Null when the agent can't run on this
-   * platform (the reason is already on the picker row). */
+   * before anything is downloaded. The registry's recipe it was resolved
+   * from is kept whole beside it, in `registrySource`. Null when the agent
+   * can't run on this platform (the reason is already on the picker row). */
   private registryLaunch(
     agent: RegistryAgent,
     patchbayAgentId: PatchbayAgentId,
@@ -768,25 +769,30 @@ export class AgentsStore implements ConnectionOperations {
       case "uvx":
         return {
           spec: { patchbayAgentId, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
-          registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
+          registrySource: {
+            registryId: agent.id,
+            distributionKind: launch.kind,
+            pinnedVersion: agent.version,
+            distribution: { ...launch.published, args: [...launch.published.args], env: { ...launch.published.env } },
+          },
         };
       case "binary": {
-        const pinnedDigest = launch.sha256 === null ? {} : { sha256: launch.sha256 };
+        const target = launch.published;
         return {
           spec: {
             patchbayAgentId,
             name: agent.name,
-            command: resolvedBinaryPath(this.deps.binaryCacheDir, agent.id, agent.version, launch.cmd),
-            args: [...launch.args],
-            env: { ...launch.env },
+            command: resolvedBinaryPath(this.deps.binaryCacheDir, agent.id, agent.version, target.cmd),
+            args: [...target.args],
+            env: { ...target.env },
             cwd,
-            binary: { distribution: agent.id, archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd, ...pinnedDigest },
+            binary: archiveFacts(agent.id, agent.version, target),
           },
           registrySource: {
             registryId: agent.id,
             distributionKind: "binary",
             pinnedVersion: agent.version,
-            binary: { archiveUrl: launch.archiveUrl, cmd: launch.cmd, ...pinnedDigest },
+            distribution: { ...target, args: [...target.args], env: { ...target.env } },
           },
         };
       }
@@ -954,4 +960,21 @@ export class AgentsStore implements ConnectionOperations {
         : spec.command;
     await this.loginViaTerminal(patchbayAgentId, { command, args: [...spec.args, ...typed.args], env }, signal);
   }
+}
+
+/** A registry binary's archive as the launch phase takes it: where it is
+ * downloaded from, the executable inside it and the digest published with
+ * it — cached and looked up by the registry id and version. */
+function archiveFacts(
+  registryId: string,
+  version: string,
+  target: { archive: string; cmd: string; sha256?: string },
+): NonNullable<LaunchSpec["binary"]> {
+  return {
+    distribution: registryId,
+    version,
+    archiveUrl: target.archive,
+    cmd: target.cmd,
+    ...(target.sha256 === undefined ? {} : { sha256: target.sha256 }),
+  };
 }

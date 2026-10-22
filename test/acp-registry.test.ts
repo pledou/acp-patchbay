@@ -116,9 +116,12 @@ describe("binary digests", () => {
       },
     });
 
-  it("resolution carries the target's digest as published, null when it has none", () => {
-    expect(resolveDistribution(binaryAgent("1.0.0", DIGEST))).toMatchObject({ kind: "binary", sha256: DIGEST });
-    expect(resolveDistribution(binaryAgent("1.0.0"))).toMatchObject({ kind: "binary", sha256: null });
+  it("resolution carries the target as published — its digest only when it has one", () => {
+    expect(resolveDistribution(binaryAgent("1.0.0", DIGEST))).toMatchObject({ kind: "binary", published: { sha256: DIGEST } });
+    expect(resolveDistribution(binaryAgent("1.0.0"))).toEqual({
+      kind: "binary",
+      published: { archive: "https://example.com/a.tar.gz", cmd: "./a", args: [], env: {} },
+    });
   });
 
   it("a malformed digest still parses — a bad field never hides its agent", () => {

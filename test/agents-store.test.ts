@@ -15,6 +15,7 @@ import { orchestratorHarness, type OrchestratorHarnessOptions } from "./support/
 import { fileTempDir, tempDir } from "./support/teardown";
 import { SETTLE } from "./support/wait-for";
 import { Cancelled } from "../src/orchestrator/queue";
+import { hostPlatformKey } from "../src/orchestrator/stores/acp-registry";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import type { AgentConfigView } from "../src/shared/protocol";
@@ -352,6 +353,35 @@ describe("agents store", () => {
     await h.gates.upgrade("old" as PatchbayAgentId);
     expect(h.agents.config("old" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("4.0.0");
   }, 120_000);
+
+  it("Add and a re-resolve (Upgrade, import) keep the registry's recipe for the pinned version whole — npx package, args and env, or this platform's binary target", async () => {
+    const h = harness();
+    const serve = (version: string, distribution: object) =>
+      vi.stubGlobal("fetch", async () =>
+        new Response(JSON.stringify({ version: "1.0.0", agents: [{ id: "reg", name: "reg", version, distribution }] }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    serve("1.0.0", { npx: { package: "reg@1.0.0", args: ["--acp"], env: { REG_FLAG: "1" } } });
+    await h.deps.registry.load();
+    const added = await h.agents.saveFrom({ registryId: "reg" });
+    expect(h.agents.config(added!)?.registrySource).toEqual({
+      registryId: "reg",
+      distributionKind: "npx",
+      pinnedVersion: "1.0.0",
+      distribution: { package: "reg@1.0.0", args: ["--acp"], env: { REG_FLAG: "1" } },
+    });
+
+    const target = { archive: "https://example.test/reg-2.0.0.tar.gz", cmd: "./reg", args: ["acp"], env: { REG_HOME: "x" }, sha256: "ab".repeat(32) };
+    serve("2.0.0", { binary: { [hostPlatformKey()!]: target } });
+    await h.agents.resolveHere(added!);
+    expect(h.agents.config(added!)?.registrySource).toEqual({
+      registryId: "reg",
+      distributionKind: "binary",
+      pinnedVersion: "2.0.0",
+      distribution: target,
+    });
+  });
 
   it("an imported agent is resolved for this machine from a fresh registry read — or, unlisted, stays as the file had it", async () => {
     const h = harness();

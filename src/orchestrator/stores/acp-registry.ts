@@ -150,18 +150,15 @@ export function hostPlatformKey(): PlatformKey | null {
   return (PLATFORM_KEYS as readonly string[]).includes(key) ? (key as PlatformKey) : null;
 }
 
+/** A distribution as the registry publishes it: npx/uvx's package, or the
+ * host platform's binary target — the recipe a registry agent is added and
+ * upgraded from. */
+export type PublishedNpxOrUvx = z.infer<typeof npxOrUvxDistSchema>;
+export type PublishedBinaryTarget = z.infer<typeof binaryTargetSchema>;
+
 export type ResolvedDistribution =
-  | { kind: "npx"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
-  | { kind: "uvx"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
-  | {
-      kind: "binary";
-      archiveUrl: string;
-      cmd: string;
-      args: readonly string[];
-      env: Readonly<Record<string, string>>;
-      /** As published — unvalidated; null when the target carries none. */
-      sha256: string | null;
-    };
+  | { kind: "npx" | "uvx"; command: string; args: readonly string[]; env: Readonly<Record<string, string>>; published: PublishedNpxOrUvx }
+  | { kind: "binary"; published: PublishedBinaryTarget };
 
 /** The registry record as patchbay presents it (protocol.ts
  * RegistryAgentView): platform launch resolution folded to an honest
@@ -190,24 +187,17 @@ export function resolveDistribution(
 ): ResolvedDistribution | { error: string } {
   const d = agent.distribution;
   if (d.npx) {
-    return { kind: "npx", command: "npx", args: ["-y", d.npx.package, ...d.npx.args], env: d.npx.env };
+    return { kind: "npx", command: "npx", args: ["-y", d.npx.package, ...d.npx.args], env: d.npx.env, published: d.npx };
   }
   if (d.uvx) {
-    return { kind: "uvx", command: "uvx", args: [d.uvx.package, ...d.uvx.args], env: d.uvx.env };
+    return { kind: "uvx", command: "uvx", args: [d.uvx.package, ...d.uvx.args], env: d.uvx.env, published: d.uvx };
   }
   if (d.binary) {
     const key = hostPlatformKey();
     if (key === null) return { error: "unsupported platform for a binary distribution" };
     const target = d.binary[key];
     if (target === undefined) return { error: `no binary build published for ${key}` };
-    return {
-      kind: "binary",
-      archiveUrl: target.archive,
-      cmd: target.cmd,
-      args: target.args,
-      env: target.env,
-      sha256: target.sha256 ?? null,
-    };
+    return { kind: "binary", published: target };
   }
   return { error: "this agent publishes no distribution mechanism patchbay understands" };
 }
@@ -226,7 +216,7 @@ export function binaryDigestFor(
 ): string | null {
   const agent = agents.find((a) => a.id === registryId && a.version === version);
   const current = agent === undefined ? undefined : resolveDistribution(agent);
-  const listed = current !== undefined && "kind" in current && current.kind === "binary" ? current.sha256 : null;
+  const listed = current !== undefined && "kind" in current && current.kind === "binary" ? (current.published.sha256 ?? null) : null;
   return listed ?? pinned;
 }
 

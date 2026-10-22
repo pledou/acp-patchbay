@@ -26,25 +26,44 @@ const agentDefaultsSchema = z.object({
   options: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
 });
 
+const envSchema = z.record(z.string(), z.string());
+
 /** Present only when this config was created from the official ACP agent
  * registry — the pinned version drives the update fact (the upgrade chip)
- * and is what gets re-resolved on Upgrade. Absent for custom commands. */
-const agentRegistrySourceSchema = z.object({
-  registryId: z.string().min(1),
-  distributionKind: z.enum(["npx", "uvx", "binary"]),
-  pinnedVersion: z.string().min(1),
-  /** `binary` kind: the archive the pinned version is downloaded from and
-   * the executable's path inside it — what a connect needs to (re)acquire
-   * the binary as a launch phase. Absent on records written before this
-   * field existed: those spawn their recorded absolute `command` as is.
-   * `sha256`: the archive's digest as the registry published it for this
-   * version — kept because the registry lists only the latest version, so
-   * once it moves on this copy is the only one left to check a
-   * re-download against. Replaced whole with the rest at Upgrade. */
-  binary: z
-    .object({ archiveUrl: z.string().min(1), cmd: z.string().min(1), sha256: z.string().optional() })
-    .optional(),
-});
+ * and is what gets re-resolved on Upgrade. Absent for custom commands.
+ *
+ * `distribution`: the registry's recipe for the pinned version on this
+ * machine's platform, exactly as the registry published it — kept because
+ * the registry lists only each agent's latest version, so once it moves on
+ * this copy is the only record of what the agent was added or upgraded
+ * from. Written whole at Add, Upgrade and an import's re-resolve, never
+ * edited. Absent on records written before it was kept. A `binary` one
+ * carries the archive a connect (re)acquires the executable from, and the
+ * archive's `sha256` when one was published — the copy a re-download is
+ * checked against once the registry has moved on. Its `args` and `env` are
+ * absent on records written while only the archive was kept — unknown,
+ * never assumed empty. */
+const registryLinkSchema = { registryId: z.string().min(1), pinnedVersion: z.string().min(1) };
+const agentRegistrySourceSchema = z.discriminatedUnion("distributionKind", [
+  z.object({
+    ...registryLinkSchema,
+    distributionKind: z.enum(["npx", "uvx"]),
+    distribution: z.object({ package: z.string().min(1), args: z.array(z.string()), env: envSchema }).optional(),
+  }),
+  z.object({
+    ...registryLinkSchema,
+    distributionKind: z.literal("binary"),
+    distribution: z
+      .object({
+        archive: z.string().min(1),
+        cmd: z.string().min(1),
+        args: z.array(z.string()).optional(),
+        env: envSchema.optional(),
+        sha256: z.string().optional(),
+      })
+      .optional(),
+  }),
+]);
 
 export const agentConfigSchema = z.object({
   id: savedId<PatchbayAgentId>(),
@@ -114,6 +133,31 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
           const { mode, ...defaults } = r.defaults;
           const options = mode === "" ? defaults.options : { [MODE_KNOB_ID]: mode, ...defaults.options };
           return { ...r, defaults: { ...defaults, ...(options === undefined ? {} : { options }) } };
+        }),
+      );
+    }
+    // Once, at construction: a binary agent from when only its archive was
+    // kept carries it as `registrySource.binary` ({archiveUrl, cmd,
+    // sha256}) — moved to `distribution` under the registry's own names.
+    // Read as it was, the archive would be dropped.
+    const linked = kv.get<unknown>(KEY);
+    const withArchive = (
+      r: unknown,
+    ): r is { registrySource: { binary: { archiveUrl: string; cmd: string; sha256?: string } } } =>
+      typeof r === "object" &&
+      r !== null &&
+      "registrySource" in r &&
+      typeof r.registrySource === "object" &&
+      r.registrySource !== null &&
+      "binary" in r.registrySource;
+    if (Array.isArray(linked) && linked.some(withArchive)) {
+      void kv.update(
+        KEY,
+        linked.map((r: unknown) => {
+          if (!withArchive(r)) return r;
+          const { binary, ...source } = r.registrySource;
+          const { archiveUrl, ...rest } = binary;
+          return { ...r, registrySource: { ...source, distribution: { archive: archiveUrl, ...rest } } };
         }),
       );
     }

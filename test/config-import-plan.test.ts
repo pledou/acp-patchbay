@@ -100,7 +100,11 @@ describe("an import's plan", () => {
     const mine: AgentConfig = {
       ...theirs,
       command: "C:\\Users\\me\\AppData\\Roaming\\Code\\User\\globalStorage\\solutionsunity.acp-patchbay\\bin-cache\\kimi\\0.3.1\\kimi.exe",
-      registrySource: { ...theirs.registrySource!, binary: { archiveUrl: "https://example.test/kimi-0.3.1-windows-x64.zip", cmd: "kimi.exe" } },
+      registrySource: {
+        ...theirs.registrySource!,
+        distributionKind: "binary",
+        distribution: { archive: "https://example.test/kimi-0.3.1-windows-x64.zip", cmd: "kimi.exe", args: ["acp"], env: {} },
+      },
     };
     // The same as here, it lands nothing — so nothing to know about landing it.
     expect(of(planImport(read, { ...empty, agents: [mine] }, here), `agent:${theirs.id}`)).toMatchObject({ fate: "unchanged", flags: [] });

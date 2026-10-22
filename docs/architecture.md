@@ -307,12 +307,19 @@ flowchart TD
   happens here, as a labeled phase on the agent's own card, behind one modal
   confirmation, never as part of adding it). A registry `binary` agent's
   archive is the first prerequisite: the config persists at the click with
-  the archive facts, and the connect resolves `command` to the cached path,
+  the registry's recipe for the version (below), and the connect resolves
+  `command` to the cached path,
   downloading when this version isn't cached — always confirmed first, and
   held to the archive's SHA-256 when its registry entry publishes one
   (optional per target in the registry format). The digest is pinned with
   the version at Add and replaced whole at Upgrade, because the registry
-  lists only each agent's latest version. The registry is read right before
+  lists only each agent's latest version — and for the same reason every
+  registry agent keeps the recipe it was added or upgraded from, exactly
+  as the registry published it for this platform: npx/uvx's package, args
+  and env, or the binary target's archive, cmd, args, env and digest.
+  Written whole at Add, Upgrade and an import's re-resolve, never edited;
+  an agent stored while only the archive was kept has its args and env
+  unknown, never assumed empty. The registry is read right before
   the download; its word wins while it still lists that version, the pinned
   copy after it moves on — and the prompt says only what is known: checked,
   none published, or the registry couldn't be read. It is checked on the downloaded bytes before anything

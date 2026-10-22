@@ -29,7 +29,7 @@ describe("agent config store — registry binary facts", () => {
         registryId: "kimi",
         distributionKind: "binary",
         pinnedVersion: "1.2.3",
-        binary: { archiveUrl: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi" },
+        distribution: { archive: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi", args: ["acp"], env: {} },
       },
     });
     const reread = new AgentConfigStore(kv).get("kimi" as PatchbayAgentId);
@@ -37,7 +37,7 @@ describe("agent config store — registry binary facts", () => {
       registryId: "kimi",
       distributionKind: "binary",
       pinnedVersion: "1.2.3",
-      binary: { archiveUrl: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi" },
+      distribution: { archive: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi", args: ["acp"], env: {} },
     });
   });
 
@@ -49,7 +49,7 @@ describe("agent config store — registry binary facts", () => {
       registrySource: { registryId: "legacy", distributionKind: "binary", pinnedVersion: "0.9.0" },
     });
     const reread = new AgentConfigStore(kv).get("legacy" as PatchbayAgentId);
-    expect(reread?.registrySource?.binary).toBeUndefined();
+    expect(reread?.registrySource?.distribution).toBeUndefined();
     expect(reread?.command).toBe("/cache/kimi/1.2.3/kimi");
   });
 
@@ -61,7 +61,41 @@ describe("agent config store — registry binary facts", () => {
       command: "npx",
       registrySource: { registryId: "kilo", distributionKind: "npx", pinnedVersion: "2.0.0" },
     });
-    expect(new AgentConfigStore(kv).get("kilo" as PatchbayAgentId)?.registrySource?.binary).toBeUndefined();
+    expect(new AgentConfigStore(kv).get("kilo" as PatchbayAgentId)?.registrySource?.distribution).toBeUndefined();
+  });
+});
+
+describe("agent config store — an archive kept before the recipe", () => {
+  const KEY = STORAGE_KEYS.agents;
+
+  it("moves to the recipe at load under the registry's names — args and env stay unknown, nothing else moves", async () => {
+    const kv = new MemoryKV();
+    const npx = { id: "npx", ...base, name: "npx", registrySource: { registryId: "kilo", distributionKind: "npx", pinnedVersion: "2.0.0" } };
+    await kv.update(KEY, [
+      {
+        id: "kimi",
+        ...base,
+        registrySource: {
+          registryId: "kimi",
+          distributionKind: "binary",
+          pinnedVersion: "1.2.3",
+          binary: { archiveUrl: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi", sha256: "ab".repeat(32) },
+        },
+      },
+      npx,
+    ]);
+    const store = new AgentConfigStore(kv);
+    expect(store.get("kimi" as PatchbayAgentId)?.registrySource).toEqual({
+      registryId: "kimi",
+      distributionKind: "binary",
+      pinnedVersion: "1.2.3",
+      distribution: { archive: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi", sha256: "ab".repeat(32) },
+    });
+    expect((kv.get(KEY) as unknown[])[1]).toEqual(npx);
+    // rewritten on disk: the next load has nothing left to move
+    const update = vi.spyOn(kv, "update");
+    new AgentConfigStore(kv);
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

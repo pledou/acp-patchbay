@@ -43,7 +43,7 @@ describe("reading a configuration file", () => {
     expect(r.patchbayVersion).toBe("0.86.0");
     expect(r.exportedAt).toBe("2026-10-13T12:00:00.000Z");
     expect(r.agents.map((a) => a.id)).toEqual(["claude", "6f1c2a9e-3b7d-4e21-9a5f-0c8d2e4b7a13", "bare"]);
-    expect(r.agents[1]?.registrySource?.binary?.cmd).toBe("./kimi");
+    expect(r.agents[1]?.registrySource).toMatchObject({ distributionKind: "binary", distribution: { cmd: "./kimi" } });
     expect(r.knobs).toEqual({ claude: { mode: "plan" } });
     expect(r.mcpServers.map((s) => [s.id, s.source.kind])).toEqual([
       ["keyed", "custom-http"],

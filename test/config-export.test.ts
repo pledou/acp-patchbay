@@ -62,7 +62,7 @@ async function machine() {
       registryId: "kimi",
       distributionKind: "binary",
       pinnedVersion: "0.3.1",
-      binary: { archiveUrl: "https://example.test/kimi-0.3.1-linux-x64.tar.gz", cmd: "./kimi", sha256: "ab".repeat(32) },
+      distribution: { archive: "https://example.test/kimi-0.3.1-linux-x64.tar.gz", cmd: "./kimi", args: ["acp"], env: {}, sha256: "ab".repeat(32) },
     },
     lastSeenVersion: null,
   });
