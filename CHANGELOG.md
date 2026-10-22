@@ -11,6 +11,12 @@
   agent edited before this release is made custom at first start, wherever
   it can be told from the registry's own. The way back to the registry is
   adding it again. (#121)
+- **An upgrade leaves your env alone.** Each upgrade of a registry agent
+  wrote the registry's env values over the agent's env: a value you had
+  changed was set back without a word, and a key the registry stopped
+  setting stayed forever. The registry's env now seeds the agent's env
+  when it is added, and an upgrade only tells you what the registry now
+  sets differently, so you can take it in Settings › Agents. (#123)
 
 ## 0.88.2 — 2026-10-21
 

@@ -56,6 +56,7 @@ function harness(opts: { kv?: MemoryKV; ports?: OrchestratorHarnessOptions["port
     row: (patchbayAgentId: PatchbayAgentId) => state().agents.find((a) => a.id === patchbayAgentId),
     paths: h.paths,
     saveAgent: h.saveAgent,
+    warnings: () => h.asked.filter((a) => a.port === "warn").map((a) => a.args[0]),
   };
 }
 type Harness = ReturnType<typeof harness>;
@@ -454,6 +455,50 @@ describe("agents store", () => {
     await h.saveAgent(fakeConfig("edited", {}, { command: "/home/me/tools/reg", registrySource }));
     expect(await h.agents.resolveHere("edited" as PatchbayAgentId)).toBe(true);
     expect(h.agents.config("edited" as PatchbayAgentId)).toMatchObject({ command: "/home/me/tools/reg", registrySource: null });
+  });
+
+  it("the env is the user's: Add seeds it from the recipe, an Upgrade never writes it and says what the registry changed", async () => {
+    const h = harness();
+    const serve = (version: string, env: Record<string, string>) =>
+      vi.stubGlobal("fetch", async () =>
+        new Response(
+          JSON.stringify({ version: "1.0.0", agents: [{ id: "reg", name: "reg", version, distribution: { npx: { package: `reg@${version}`, env } } }] }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    serve("1.0.0", { MODEL: "a", AUTO_UPDATE: "0", GONE: "1" });
+    await h.deps.registry.load();
+    const added = (await h.agents.saveFrom({ registryId: "reg" }))!;
+    expect(await h.deps.env.get(added)).toEqual({ MODEL: "a", AUTO_UPDATE: "0", GONE: "1" });
+
+    const mine = { MODEL: "mine", AUTO_UPDATE: "0", GONE: "1", API_KEY: "secret" };
+    await h.deps.env.set(added, mine);
+    serve("2.0.0", { MODEL: "b", AUTO_UPDATE: "0", NEW: "x" });
+    await h.agents.resolveHere(added);
+    expect(await h.deps.env.get(added)).toEqual(mine);
+    expect(h.agents.config(added)?.registrySource?.distribution).toMatchObject({ env: { MODEL: "b", AUTO_UPDATE: "0", NEW: "x" } });
+    expect(h.warnings()).toEqual([
+      "reg 2.0.0: the ACP registry changed its env — now sets MODEL=b (was a); now sets NEW=x; no longer sets GONE. Your env is unchanged; edit it in Settings › Agents to take any of this.",
+    ]);
+  });
+
+  it("an agent stored before its recipe hears the new env against its own — its values never shown", async () => {
+    const h = harness();
+    await h.saveAgent(
+      fakeConfig("old", {}, { name: "Old", env: { TOKEN: "secret" }, registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
+    );
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({ version: "1.0.0", agents: [{ id: "reg", name: "reg", version: "2.0.0", distribution: { npx: { package: "reg@2.0.0", env: { TOKEN: "public", MODE: "acp" } } } }] }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    await h.deps.registry.load();
+    await h.agents.resolveHere("old" as PatchbayAgentId);
+    expect(await h.deps.env.get("old" as PatchbayAgentId)).toEqual({ TOKEN: "secret" });
+    expect(h.warnings()).toEqual([
+      "Old 2.0.0: the ACP registry changed its env — now sets TOKEN=public (yours differs); now sets MODE=acp. Your env is unchanged; edit it in Settings › Agents to take any of this.",
+    ]);
   });
 
   it("an imported agent is resolved for this machine from a fresh registry read — or, unlisted, stays as the file had it", async () => {

@@ -319,7 +319,11 @@ flowchart TD
   and env, or the binary target's archive, cmd, args, env and digest.
   Written whole at Add, Upgrade and an import's re-resolve, never edited;
   an agent stored while only the archive was kept has its args and env
-  unknown, never assumed empty. The registry is read right before
+  unknown, never assumed empty. The recipe's env seeds the agent's env at
+  Add and never again: the env is the user's, so an Upgrade leaves it as
+  it is and says what the registry changed in it between the two recipes
+  (against the user's own env, values unshown, when the old recipe's is
+  unknown). The registry is read right before
   the download; its word wins while it still lists that version, the pinned
   copy after it moves on — and the prompt says only what is known: checked,
   none published, or the registry couldn't be read. It is checked on the downloaded bytes before anything

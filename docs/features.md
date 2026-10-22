@@ -43,6 +43,9 @@ deliverable.
 - Editing a registry agent's command makes it a custom agent: what was typed
   is what runs, and its upgrades are the user's from then on — the form
   says so before Save.
+- An agent's env is the user's: the registry's values seed it when the agent
+  is added, and an upgrade never changes it — it says what the registry now
+  sets differently, for the user to take or leave.
 - User can see each agent's live status: untested (configured, never
   connected), running, stopped, crashed, reconnecting — every configured
   agent is visible from the first frame, not only once connected.

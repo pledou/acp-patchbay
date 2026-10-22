@@ -858,7 +858,9 @@ export class AgentsStore implements ConnectionOperations {
    * to start conversations on), not two decoupled steps a user could leave
    * half-done. It takes a name no other agent holds. */
   private async add(spec: LaunchSpec, registrySource: AgentConfig["registrySource"]): Promise<void> {
-    await this.mergeRegistryEnv(spec);
+    // The env is the user's from here on: a registry recipe's env seeds it,
+    // once — nothing writes it after (see `noteEnvChange`).
+    if (Object.keys(spec.env).length > 0) await this.deps.env.set(spec.patchbayAgentId, { ...spec.env });
     await this.deps.configs.add({
       id: spec.patchbayAgentId,
       name: spec.name,
@@ -872,27 +874,44 @@ export class AgentsStore implements ConnectionOperations {
     await this.publishAll();
   }
 
-  /** Upgrade's save: the registry's new launch and pin replace the old
-   * ones; the agent's own facts — its name, auto-connect, defaults, the
-   * version that last answered — stay as they are. */
+  /** Upgrade's save: the registry's new launch, pin and recipe replace the
+   * old ones; the agent's own facts — its name, env, auto-connect,
+   * defaults, the version that last answered — stay as they are. */
   private async saveUpgrade(
     config: AgentConfig,
     spec: LaunchSpec,
     registrySource: AgentConfig["registrySource"],
   ): Promise<void> {
-    await this.mergeRegistryEnv(spec);
     await this.deps.configs.upsert({ ...config, command: spec.command, args: [...spec.args], registrySource });
+    await this.noteEnvChange(config, registrySource);
     await this.publishAll();
   }
 
-  /** Registry-declared launch env (part of the distribution recipe) goes to
-   * the same SecretStorage record user-entered env lives in — one source
-   * at spawn time. Registry values win for their own keys; the user's
-   * other keys survive an Upgrade. */
-  private async mergeRegistryEnv(spec: LaunchSpec): Promise<void> {
-    if (Object.keys(spec.env).length === 0) return;
-    const stored = await this.deps.env.get(spec.patchbayAgentId);
-    await this.deps.env.set(spec.patchbayAgentId, { ...stored, ...spec.env });
+  /** The env is the user's: Add seeds it from the registry's recipe, and an
+   * Upgrade never writes it. What the registry changed in its env between
+   * the agent's old recipe and its new one is said instead — keys it now
+   * sets or sets differently, and keys it no longer sets — for the user to
+   * take or leave. An agent stored before its recipe was kept has no old
+   * env to compare: the new one is read against the user's own env, whose
+   * values are never shown — they may be secrets. */
+  private async noteEnvChange(config: AgentConfig, next: AgentConfig["registrySource"]): Promise<void> {
+    const before = config.registrySource?.distribution?.env;
+    const after = next?.distribution?.env ?? {};
+    const base = before ?? (await this.deps.env.get(config.id));
+    const changes = [
+      ...Object.entries(after).flatMap(([key, value]) =>
+        !(key in base)
+          ? [`now sets ${key}=${value}`]
+          : base[key] === value
+            ? []
+            : [`now sets ${key}=${value} (${before === undefined ? "yours differs" : `was ${base[key]}`})`],
+      ),
+      ...(before === undefined ? [] : Object.keys(before).filter((key) => !(key in after)).map((key) => `no longer sets ${key}`)),
+    ];
+    if (changes.length === 0) return;
+    this.hooks.warn(
+      `${config.name} ${next?.pinnedVersion ?? ""}: the ACP registry changed its env — ${changes.join("; ")}. Your env is unchanged; edit it in Settings › Agents to take any of this.`,
+    );
   }
 
   /** Two installs, one memory: a PATH-installed sibling CLI shares the
