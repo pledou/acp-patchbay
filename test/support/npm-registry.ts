@@ -69,11 +69,13 @@ export async function npmRegistry(work: string, packages: Record<string, Package
     requests++;
     const name = req.url?.slice(1).replace(/-1\.0\.0\.tgz$/, "") ?? "";
     const tgz = tarballs.get(name);
-    if (tgz === undefined) return void res.writeHead(404).end("{}");
+    // Metadata answers are JSON, typed as the real registry types them.
+    const json = { "content-type": "application/json" };
+    if (tgz === undefined) return void res.writeHead(404, json).end("{}");
     if (!req.url!.endsWith(".tgz")) {
       const dist = { tarball: `${url}${name}-1.0.0.tgz`, integrity: `sha512-${createHash("sha512").update(tgz).digest("base64")}` };
       const version = { name, version: "1.0.0", ...packages[name]!.manifest, dist };
-      return void res.end(JSON.stringify({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } }));
+      return void res.writeHead(200, json).end(JSON.stringify({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } }));
     }
     fetches.set(name, (fetches.get(name) ?? 0) + 1);
     const hold = held.get(name);
