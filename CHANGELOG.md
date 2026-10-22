@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.88.3 — 2026-10-23
+
+Three fixes: an edited registry agent runs the command you typed (#121),
+an upgrade leaves your env alone (#123), and a message an agent crash cut
+off waits for you to send again (#120).
 
 - **An edited command is what runs.** Changing the command of an agent
   added from the ACP registry kept its registry link: a binary agent still
