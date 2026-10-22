@@ -320,8 +320,9 @@ export type Action =
    * "errors (N)" chip points at. */
   | { kind: "reportWebviewError"; view: "agent-view" | "settings"; message: string }
   /** The form's full desired config, `env` included — what is in the box
-   * is what gets stored. */
-  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView }
+   * is what gets stored. `commandLine`: the launch line as typed, only when
+   * the user changed it — without one the stored command stays. */
+  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView; commandLine?: string }
   | { kind: "removeAgentConfig"; patchbayAgentId: PatchbayAgentId }
   /** Drag-drop reorder from Settings — `ids` is the full list order as the
    * view sees it at drop time; the store keeps unnamed records at the tail. */

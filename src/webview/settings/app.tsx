@@ -95,7 +95,7 @@ export function App({ state }: { state: SettingsState }) {
               send({ kind: "connectAgent", source: { patchbayAgentId } })
             }
             onAddAgent={(source) => send({ kind: "connectAgent", source })}
-            onSave={(config) => send({ kind: "addOrUpdateAgentConfig", config })}
+            onSave={(config, commandLine) => send({ kind: "addOrUpdateAgentConfig", config, commandLine })}
             onRemove={(patchbayAgentId) => send({ kind: "removeAgentConfig", patchbayAgentId })}
             onStop={(patchbayAgentId) => send({ kind: "stopAgent", patchbayAgentId })}
             onRestart={(patchbayAgentId) => send({ kind: "restartAgent", patchbayAgentId })}

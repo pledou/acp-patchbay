@@ -32,7 +32,7 @@ import type {
   PreferencesView,
   SettingsEvent,
 } from "../shared/protocol";
-import { formatCommandLine, parseCommandLine } from "../shared/command-line";
+import { formatCommandLine, parseCommandLine, sameCommandLine } from "../shared/command-line";
 import { unlessAborted } from "./abort";
 import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
@@ -43,10 +43,10 @@ import { nullLogger, type Logger } from "./logger";
 import type { TerminalAuthRecipe } from "./meta";
 import type { AgentPool, LaunchSpec } from "./pool";
 import { mergeEnv, resolveExecutableWin32 } from "./spawn-resolve";
-import { type AcpRegistryStore, type RegistryAgent, type RegistryReadMoment, resolveDistribution } from "./stores/acp-registry";
+import { type AcpRegistryStore, packageLaunch, type RegistryAgent, type RegistryReadMoment, resolveDistribution } from "./stores/acp-registry";
 import type { AgentConfig, AgentConfigStore } from "./stores/agent-configs";
 import type { AuthLockStore } from "./stores/auth-locks";
-import { resolvedBinaryPath } from "./stores/binary-installer";
+import { isResolvedBinaryPath, resolvedBinaryPath } from "./stores/binary-installer";
 import type { ComposerKnobsStore } from "./stores/composer-knobs";
 import type { LastConnectedStore } from "./stores/last-connected";
 import type { DefaultAgentFoldStore } from "./stores/default-agent-fold";
@@ -427,10 +427,63 @@ export class AgentsStore implements ConnectionOperations {
    * False when the registry serves nothing this platform runs; the agent
    * then stays as the file had it. */
   async resolveHere(patchbayAgentId: PatchbayAgentId): Promise<boolean> {
+    // An edited agent's command is its own, on any machine: it is made
+    // custom, never re-resolved over.
+    const imported = this.config(patchbayAgentId);
+    if (imported !== undefined && (await this.relink(imported)) && this.config(patchbayAgentId)?.registrySource === null) return true;
     const config = this.config(patchbayAgentId);
     const launch = config === undefined ? null : await this.freshLaunch(config, "import");
     if (config === undefined || launch === null) return false;
     await this.saveUpgrade(config, launch.spec, launch.registrySource);
+    return true;
+  }
+
+  /** Every registry agent's link put right — run once the registry's
+   * copy is loaded, before any agent starts, and after an import. */
+  async relinkAll(): Promise<void> {
+    let moved = false;
+    for (const config of this.deps.configs.list()) moved = (await this.relink(config)) || moved;
+    if (moved) await this.publishAll();
+  }
+
+  /** A registry agent's link as its record proves it. An agent stored
+   * before its recipe was kept gets it from the registry's copy, while that
+   * still lists the pinned version — otherwise its next Upgrade writes it.
+   * And an agent whose command isn't its recipe's was edited while an edit
+   * still kept the link, which let the registry's launch run over the
+   * command typed: it is made custom. A binary's command is the archive's
+   * executable under whatever cache root it was written with. True when
+   * the record moved. */
+  private async relink(config: AgentConfig): Promise<boolean> {
+    const source = config.registrySource;
+    if (source === null) return false;
+    const listed = this.deps.registry
+      .current()
+      .agents.find((a) => a.id === source.registryId && a.version === source.pinnedVersion);
+    const resolved = listed === undefined ? undefined : resolveDistribution(listed);
+    let linked: AgentConfig["registrySource"];
+    let edited: boolean;
+    if (source.distributionKind === "binary") {
+      const published = resolved !== undefined && "kind" in resolved && resolved.kind === "binary" ? resolved.published : undefined;
+      const recipe = source.distribution?.args === undefined && published !== undefined ? keptRecipe(published) : source.distribution;
+      linked = { ...source, distribution: recipe };
+      edited =
+        recipe !== undefined &&
+        (!isResolvedBinaryPath(config.command, source.registryId, source.pinnedVersion, recipe.cmd) ||
+          (recipe.args !== undefined && !sameCommandLine(config, { command: config.command, args: recipe.args })));
+    } else {
+      const published = resolved !== undefined && "kind" in resolved && resolved.kind === source.distributionKind ? resolved.published : undefined;
+      const recipe = source.distribution ?? (published === undefined ? undefined : keptRecipe(published));
+      linked = { ...source, distribution: recipe };
+      edited = recipe !== undefined && !sameCommandLine(config, packageLaunch(source.distributionKind, recipe));
+    }
+    if (edited) {
+      await this.deps.configs.upsert({ ...config, registrySource: null });
+      this.log.info(`${config.id}: its command was edited before an edit made it custom — now a custom agent`);
+      return true;
+    }
+    if (linked.distribution === source.distribution) return false;
+    await this.deps.configs.upsert({ ...config, registrySource: linked });
     return true;
   }
 
@@ -508,27 +561,27 @@ export class AgentsStore implements ConnectionOperations {
   }
 
   /** The Settings Agents page (add, edit, and remove agents,
-   * including launch configuration per agent) — persists globally. The
-   * Edit form sends the launch line raw (parsing is
-   * logic), so an empty args array means "parse `command` here" — the same
-   * quote-aware house parser custom Add uses, never a naive split.
-   * `config.env` is the form's full desired set — what is in the box is
-   * what gets stored, to SecretStorage only (stores/secret-env.ts). A
-   * config for an agent the store doesn't hold is added under an id the
-   * store mints, and a name no other agent holds — a view never chooses an
-   * agent's id. */
-  async save(config: AgentConfigView): Promise<void> {
-    let { command, args } = { command: config.command, args: [...config.args] };
-    if (args.length === 0) {
-      const parsed = parseCommandLine(command);
-      if (parsed === null) {
-        this.log.error(`agent config ${config.id}: command line has an unterminated quote`);
-        return;
-      }
-      ({ command } = parsed);
-      args = parsed.args;
-    }
+   * including launch configuration per agent) — persists globally.
+   * `commandLine` is the launch line as typed, sent only when the user
+   * changed it — parsing is logic, done here by the same quote-aware house
+   * parser custom Add uses, never a naive split. Without one the stored
+   * command stays: a save from a knob or a toggle carries a copy of it
+   * back, never an edit. A changed line on a registry agent makes it a
+   * custom agent for good — what was typed is what runs, and no Upgrade
+   * may write the registry's line over it. `config.env` is the form's full
+   * desired set — what is in the box is what gets stored, to SecretStorage
+   * only (stores/secret-env.ts). A config for an agent the store doesn't
+   * hold is added under an id the store mints, and a name no other agent
+   * holds — a view never chooses an agent's id. */
+  async save(config: AgentConfigView, commandLine?: string): Promise<void> {
     const prior = this.config(config.id);
+    const typed = commandLine === undefined ? undefined : parseCommandLine(commandLine);
+    if (typed === null) {
+      this.log.error(`agent config ${config.id}: command line has an unterminated quote`);
+      return;
+    }
+    const { command, args } = typed ?? prior ?? { command: config.command, args: [...config.args] };
+    const edited = prior !== undefined && typed !== undefined && !sameCommandLine(prior, typed);
     const patchbayAgentId = prior?.id ?? mintPatchbayAgentId();
     // Identity/wire facts never round-trip through the form: the webview's
     // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
@@ -538,13 +591,14 @@ export class AgentsStore implements ConnectionOperations {
       id: patchbayAgentId,
       name: config.name,
       command,
-      args,
+      args: [...args],
       autoConnect: config.autoConnect,
       // The view's seed is stored as the defaults' `options`.
       defaults: { options: { ...config.defaults } },
-      registrySource: prior?.registrySource ?? config.registrySource,
+      registrySource: edited ? null : (prior?.registrySource ?? config.registrySource),
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
     };
+    if (edited && prior?.registrySource) this.log.info(`${prior.id}: its command was edited — now a custom agent`);
     try {
       if (prior === undefined) await this.deps.configs.add(record);
       else await this.deps.configs.upsert(record);
@@ -773,7 +827,7 @@ export class AgentsStore implements ConnectionOperations {
             registryId: agent.id,
             distributionKind: launch.kind,
             pinnedVersion: agent.version,
-            distribution: { ...launch.published, args: [...launch.published.args], env: { ...launch.published.env } },
+            distribution: keptRecipe(launch.published),
           },
         };
       case "binary": {
@@ -792,7 +846,7 @@ export class AgentsStore implements ConnectionOperations {
             registryId: agent.id,
             distributionKind: "binary",
             pinnedVersion: agent.version,
-            distribution: { ...target, args: [...target.args], env: { ...target.env } },
+            distribution: keptRecipe(target),
           },
         };
       }
@@ -977,4 +1031,10 @@ function archiveFacts(
     cmd: target.cmd,
     ...(target.sha256 === undefined ? {} : { sha256: target.sha256 }),
   };
+}
+
+/** The registry's recipe as a registry agent keeps it — its own copy, never
+ * a reference into the registry's reading. */
+function keptRecipe<T extends { args: readonly string[]; env: Readonly<Record<string, string>> }>(published: T): T {
+  return { ...published, args: [...published.args], env: { ...published.env } };
 }

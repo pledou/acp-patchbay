@@ -17,7 +17,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, readBytes } from "../net";
 
@@ -85,6 +85,14 @@ export function resolvedBinaryPath(
   cmd: string,
 ): string {
   return join(cacheRoot, distribution, version, cmd);
+}
+
+/** Whether `path` is where `resolvedBinaryPath` puts this executable,
+ * under whatever cache root it was written with — a root moves with the
+ * extension's storage, the layout below it does not. Either separator. */
+export function isResolvedBinaryPath(path: string, distribution: string, version: string, cmd: string): boolean {
+  const slashed = (p: string) => p.replaceAll("\\", "/");
+  return slashed(path).endsWith(`/${posix.join(distribution, version, slashed(cmd))}`);
 }
 
 /** Whether this exact (distribution, version) is already cached — callers use

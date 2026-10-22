@@ -1043,7 +1043,7 @@ export class OrchestratorHost {
         void this.openFileAt(action.path, action.line).catch(this.orchestrator.logCatch(`openFile ${action.path}`));
         break;
       case "addOrUpdateAgentConfig":
-        void this.orchestrator.agents.save(action.config);
+        void this.orchestrator.agents.save(action.config, action.commandLine);
         break;
       case "removeAgentConfig":
         void this.orchestrator.gates.remove(action.patchbayAgentId).catch(this.orchestrator.logCatch(`remove ${action.patchbayAgentId}`));

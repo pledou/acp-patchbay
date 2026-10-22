@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { PatchbayAgentId } from "../../shared/ids";
 
 /** ✎ Edit: launch line, env. Parsing the line is the
- * orchestrator's job — it's sent raw, args empty. Env shows what is
+ * orchestrator's job — it's sent raw, and only when it was changed. Env shows what is
  * stored and saves what is in the box. Default model/mode/effort
  * deliberately do NOT appear here: the card's knob selects own them,
  * offering only what the agent has actually offered — a free-text
@@ -36,29 +36,24 @@ function AgentConfigForm(props: {
   initial: AgentConfigView;
   /** The names the other agents hold — no two agents share one. */
   taken: readonly string[];
-  onSave(config: AgentConfigView): void;
+  onSave(config: AgentConfigView, commandLine?: string): void;
   onCancel(): void;
 }) {
   const [name, setName] = useState(props.initial.name);
-  const [command, setCommand] = useState(props.initial.command === "" ? "" : formatCommandLine(props.initial.command, props.initial.args));
+  const initialLine = props.initial.command === "" ? "" : formatCommandLine(props.initial.command, props.initial.args);
+  const [command, setCommand] = useState(initialLine);
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
   const [envText, setEnvText] = useState(formatEnvLines(props.initial.env));
 
   const nameTaken = props.taken.includes(name.trim());
+  const commandChanged = command.trim() !== initialLine;
 
   const save = () => {
     if (name.trim() === "" || nameTaken || command.trim() === "") return;
-    props.onSave({
-      id: props.initial.id,
-      name: name.trim(),
-      command: command.trim(),
-      args: [],
-      env: parseEnvLines(envText),
-      autoConnect,
-      defaults: props.initial.defaults,
-      registrySource: props.initial.registrySource,
-      lastSeenVersion: props.initial.lastSeenVersion,
-    });
+    props.onSave(
+      { ...props.initial, name: name.trim(), env: parseEnvLines(envText), autoConnect },
+      commandChanged ? command.trim() : undefined,
+    );
   };
 
   return (
@@ -75,6 +70,11 @@ function AgentConfigForm(props: {
           onInput={(e) => setCommand((e.target as HTMLInputElement).value)}
         />
       </Field>
+      {commandChanged && props.initial.registrySource !== null && (
+        <div className="note m-0 basis-full">
+          a changed command makes this a custom agent — it stops following the ACP registry, and its upgrades are yours
+        </div>
+      )}
       <Field label="auto-connect" hint="connect this agent when the window opens">
         <Toggle icon="zap" label="connect on window open" checked={autoConnect} onChange={setAutoConnect} />
       </Field>
@@ -106,8 +106,9 @@ function AgentConfigForm(props: {
 function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
   const existing = state.agentConfigs.find((c) => c.id === agent.id);
   if (existing !== undefined) return existing;
-  // The raw line rides in `command` with args empty — the orchestrator
-  // parses on save — no parsing in the webview.
+  // The raw line rides in `command` with args empty — its first save sends
+  // it as the line, which the orchestrator parses — no parsing in the
+  // webview.
   return {
     id: agent.id,
     name: agent.name,
@@ -492,7 +493,7 @@ export function AgentsSection(props: {
   state: SettingsState;
   onConnectConfigured(patchbayAgentId: PatchbayAgentId): void;
   onAddAgent(source: { registryId: string } | { command: string }): void;
-  onSave(config: AgentConfigView): void;
+  onSave(config: AgentConfigView, commandLine?: string): void;
   onRemove(patchbayAgentId: PatchbayAgentId): void;
   onStop(patchbayAgentId: PatchbayAgentId): void;
   onRestart(patchbayAgentId: PatchbayAgentId): void;
@@ -604,8 +605,11 @@ export function AgentsSection(props: {
           // show/disabled rule lives there, unit-tested; the JSX below reads
           // `controls.x` and nothing else.
           const controls = agentCardControls({ agent: a, config });
-          const saveConfig = (patch: Partial<AgentConfigView>) =>
-            props.onSave({ ...effectiveConfig, ...patch });
+          // An agent with no stored config has no command to keep — the
+          // line it was connected with goes with its first save.
+          const save = (c: AgentConfigView, commandLine?: string) =>
+            props.onSave(c, commandLine ?? (config === undefined ? c.command : undefined));
+          const saveConfig = (patch: Partial<AgentConfigView>) => save({ ...effectiveConfig, ...patch });
           // One normalized knob list (the orchestrator's knobs.ts already
           // resolved the wire's modes/configOptions split) — no dedup here.
           const offeredKnobs = knobs?.knobs ?? [];
@@ -762,8 +766,8 @@ export function AgentsSection(props: {
                     <AgentConfigForm
                       initial={effectiveConfig}
                       taken={state.agentConfigs.filter((c) => c.id !== patchbayAgentId).map((c) => c.name)}
-                      onSave={(c) => {
-                        props.onSave(c);
+                      onSave={(c, commandLine) => {
+                        save(c, commandLine);
                         setEditing(null);
                       }}
                       onCancel={() => setEditing(null)}

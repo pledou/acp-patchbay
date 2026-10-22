@@ -747,7 +747,14 @@ export class Orchestrator {
     void this.refreshAuditTail();
     void this.agents.publishAll();
     void this.mcpServers.refresh();
-    void this.acpRegistry.load().then(() => {
+    // Registry links are put right from the registry's copy before any
+    // agent starts: a link an edit should have dropped would otherwise
+    // launch the registry's build over the command typed.
+    const registryLoaded = this.acpRegistry
+      .load()
+      .then(() => this.agents.relinkAll())
+      .catch(this.logCatch("registry links"));
+    void registryLoaded.then(() => {
       this.publishRegistry();
       void this.acpRegistry.read("startup");
     });
@@ -769,6 +776,7 @@ export class Orchestrator {
       .then(() =>
         adoptStashedChips(this.sessionContinuity, this.sessionFiles, ATTACHMENTS_DIR).catch(this.logCatch("adopt stashed chips")),
       )
+      .then(() => registryLoaded)
       .then(() => this.ports.connectStartupAgents())
       // Settles the view's restore hold no matter how the connects went —
       // the loading page must never outlive the startup sequence.
@@ -888,6 +896,7 @@ export class Orchestrator {
       // Whatever landed before it stopped stays, and the restart still runs.
       outcome = { landed: 0, failures: [`the import stopped — ${err instanceof Error ? err.message : String(err)}`] };
     }
+    await this.agents.relinkAll();
     await this.republishAll();
     this.log.info(`import ${fileName}: ${outcome.landed} landed${outcome.failures.map((f) => `; ${f}`).join("")}`);
     this.settings.emit({

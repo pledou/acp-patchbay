@@ -178,6 +178,13 @@ export function registryAgentView(
   };
 }
 
+/** The line an npx/uvx package runs as — spawning it is installing it. */
+export function packageLaunch(kind: "npx" | "uvx", published: PublishedNpxOrUvx): { command: string; args: string[] } {
+  return kind === "npx"
+    ? { command: "npx", args: ["-y", published.package, ...published.args] }
+    : { command: "uvx", args: [published.package, ...published.args] };
+}
+
 /** npx/uvx first — both are ecosystem-managed installs (npm/PyPI hash-verify
  * their own tarballs, "installing" is just spawning), free and low-risk;
  * binary only when nothing else is offered: patchbay downloads and runs
@@ -187,10 +194,10 @@ export function resolveDistribution(
 ): ResolvedDistribution | { error: string } {
   const d = agent.distribution;
   if (d.npx) {
-    return { kind: "npx", command: "npx", args: ["-y", d.npx.package, ...d.npx.args], env: d.npx.env, published: d.npx };
+    return { kind: "npx", ...packageLaunch("npx", d.npx), env: d.npx.env, published: d.npx };
   }
   if (d.uvx) {
-    return { kind: "uvx", command: "uvx", args: [d.uvx.package, ...d.uvx.args], env: d.uvx.env, published: d.uvx };
+    return { kind: "uvx", ...packageLaunch("uvx", d.uvx), env: d.uvx.env, published: d.uvx };
   }
   if (d.binary) {
     const key = hostPlatformKey();

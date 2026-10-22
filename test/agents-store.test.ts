@@ -16,6 +16,7 @@ import { fileTempDir, tempDir } from "./support/teardown";
 import { SETTLE } from "./support/wait-for";
 import { Cancelled } from "../src/orchestrator/queue";
 import { hostPlatformKey } from "../src/orchestrator/stores/acp-registry";
+import { formatCommandLine } from "../src/shared/command-line";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import type { AgentConfigView } from "../src/shared/protocol";
@@ -169,7 +170,7 @@ describe("agents store", () => {
     expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("crashed");
     expect(h.row("doomed" as PatchbayAgentId)?.stderr?.join("\n")).toContain("boom: config missing");
 
-    await h.agents.save(fakeConfig("doomed", {}));
+    await h.agents.save(fakeConfig("doomed", {}), formatCommandLine(process.execPath, [FAKE_AGENT]));
     await h.gates.connect("doomed" as PatchbayAgentId);
     expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("running");
     expect(h.row("doomed" as PatchbayAgentId)?.stderr).toBeUndefined();
@@ -189,7 +190,7 @@ describe("agents store", () => {
     await h.saveAgent(fakeConfig("cmd", {}));
     await h.gates.connect("cmd" as PatchbayAgentId);
     const spawned = h.row("cmd" as PatchbayAgentId)!.command;
-    await h.agents.save(fakeConfig("cmd", {}, { args: [FAKE_AGENT, "--edited"] }));
+    await h.agents.save(fakeConfig("cmd", {}), formatCommandLine(process.execPath, [FAKE_AGENT, "--edited"]));
     expect(h.row("cmd" as PatchbayAgentId)!.command).toBe(spawned);
     await h.gates.stop("cmd" as PatchbayAgentId);
     expect(h.row("cmd" as PatchbayAgentId)!.command).toContain("--edited");
@@ -381,6 +382,78 @@ describe("agents store", () => {
       pinnedVersion: "2.0.0",
       distribution: target,
     });
+  });
+
+  it("a changed line makes a registry agent custom; a save without one keeps the stored command — a spaced path with no args included", async () => {
+    const h = harness();
+    await seedRegistry(h, { id: "reg", version: "2.0.0" });
+    const registrySource = { registryId: "reg", distributionKind: "npx" as const, pinnedVersion: "1.0.0" };
+    const spaced = join(dir, "Program Files", "agent");
+    await h.saveAgent(fakeConfig("mine", {}, { command: spaced, args: [], registrySource }));
+
+    // a knob or toggle save carries the stored command back — never an edit
+    await h.agents.save(fakeConfig("mine", {}, { command: spaced, args: [], name: "Work profile", autoConnect: true }));
+    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({ command: spaced, args: [], registrySource });
+    expect(h.row("mine" as PatchbayAgentId)?.update).toEqual({ from: "1.0.0", to: "2.0.0" });
+    // the line typed as it was keeps the link
+    await h.agents.save(fakeConfig("mine", {}, { command: spaced, args: [] }), formatCommandLine(spaced, []));
+    expect(h.agents.config("mine" as PatchbayAgentId)?.registrySource).toMatchObject(registrySource);
+
+    await h.agents.save(fakeConfig("mine", {}, { command: spaced, args: [] }), `"${spaced}" --own`);
+    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({ command: spaced, args: ["--own"], registrySource: null });
+    expect(h.row("mine" as PatchbayAgentId)?.update).toBeUndefined();
+  });
+
+  it("a registry agent stored before its recipe gets it from the registry's copy, and one edited back then is made custom", async () => {
+    const h = harness();
+    const target = { archive: "https://example.test/bin-1.0.0.tar.gz", cmd: "./bin", args: ["acp"], env: {} };
+    vi.stubGlobal("fetch", async () => new Response("offline", { status: 503 }));
+    await mkdir(join(h.paths.globalStorage, "registry"), { recursive: true });
+    await writeFile(
+      join(h.paths.globalStorage, "registry", "acp-registry-cache.json"),
+      JSON.stringify({
+        fetchedAt: new Date().toISOString(),
+        etag: null,
+        icons: {},
+        raw: {
+          version: "1.0.0",
+          agents: [
+            { id: "pkg", name: "pkg", version: "1.0.0", distribution: { npx: { package: "pkg@1.0.0", args: ["--acp"] } } },
+            { id: "bin", name: "bin", version: "1.0.0", distribution: { binary: { [hostPlatformKey()!]: target } } },
+            { id: "moved", name: "moved", version: "3.0.0", distribution: { npx: { package: "moved@3.0.0" } } },
+          ],
+        },
+      }),
+    );
+    await h.deps.registry.load();
+    const npx = (id: string, version: string) => ({ registryId: id, distributionKind: "npx" as const, pinnedVersion: version });
+    const binary = { registryId: "bin", distributionKind: "binary" as const, pinnedVersion: "1.0.0", distribution: { archive: target.archive, cmd: "./bin" } };
+    const cached = (root: string) => join(root, "bin", "1.0.0", "bin");
+    await h.saveAgent(fakeConfig("pkg-kept", {}, { command: "npx", args: ["-y", "pkg@1.0.0", "--acp"], registrySource: npx("pkg", "1.0.0") }));
+    await h.saveAgent(fakeConfig("pkg-edited", {}, { command: "pkg", args: ["--acp"], registrySource: npx("pkg", "1.0.0") }));
+    await h.saveAgent(fakeConfig("moved-edited", {}, { command: "moved", args: [], registrySource: npx("moved", "1.0.0") }));
+    // a cache root from before the extension's storage moved
+    await h.saveAgent(fakeConfig("bin-kept", {}, { command: cached("/old/root/bin-cache"), args: ["acp"], registrySource: binary }));
+    await h.saveAgent(fakeConfig("bin-edited", {}, { command: "C:\\Users\\me\\tools\\bin.exe", args: ["acp"], registrySource: binary }));
+
+    await h.agents.relinkAll();
+    const source = (id: string) => h.agents.config(id as PatchbayAgentId)?.registrySource;
+    expect(source("pkg-kept")).toEqual({ ...npx("pkg", "1.0.0"), distribution: { package: "pkg@1.0.0", args: ["--acp"], env: {} } });
+    expect(source("pkg-edited")).toBeNull();
+    // the registry lists another version now: nothing to know it by — its next Upgrade writes the recipe
+    expect(source("moved-edited")).toEqual(npx("moved", "1.0.0"));
+    expect(source("bin-kept")).toEqual({ ...binary, distribution: target });
+    expect(source("bin-edited")).toBeNull();
+    expect(h.agents.config("bin-edited" as PatchbayAgentId)?.command).toBe("C:\\Users\\me\\tools\\bin.exe");
+  });
+
+  it("an imported agent edited on its own machine is made custom, never re-resolved over", async () => {
+    const h = harness();
+    serveRegistry({ id: "reg", version: "2.0.0" });
+    const registrySource = { registryId: "reg", distributionKind: "binary" as const, pinnedVersion: "1.0.0", distribution: { archive: "https://example.test/reg.tar.gz", cmd: "reg" } };
+    await h.saveAgent(fakeConfig("edited", {}, { command: "/home/me/tools/reg", registrySource }));
+    expect(await h.agents.resolveHere("edited" as PatchbayAgentId)).toBe(true);
+    expect(h.agents.config("edited" as PatchbayAgentId)).toMatchObject({ command: "/home/me/tools/reg", registrySource: null });
   });
 
   it("an imported agent is resolved for this machine from a fresh registry read — or, unlisted, stays as the file had it", async () => {

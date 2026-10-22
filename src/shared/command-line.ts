@@ -40,6 +40,14 @@ export function parseCommandLine(
   return { command, args };
 }
 
+/** Two launches run the same line: one command, the same args in order. */
+export function sameCommandLine(
+  a: { command: string; args: readonly string[] },
+  b: { command: string; args: readonly string[] },
+): boolean {
+  return a.command === b.command && a.args.length === b.args.length && a.args.every((arg, i) => arg === b.args[i]);
+}
+
 /** What a typed line runs as, the way the Commands page's tester takes it:
  * with no shell, the line is the program and its arguments, read as a
  * command line is (null when it isn't one — a quote left open, nothing

@@ -369,7 +369,18 @@ flowchart TD
   path: it reads the registry and re-resolves the version like a first
   add — before anything stops, so a registry that no longer lists the agent leaves it
   running — and asks before a stop that would disconnect open
-  conversations.
+  conversations. A registry agent whose command line the user edits
+  leaves the registry for good: Save takes a line only when one was typed
+  (a knob or toggle save never rewrites the command), and a changed line
+  drops the link — no update is offered, no Upgrade writes the registry's
+  line over the one typed, a binary has no download phase. Name, env and
+  defaults keep it. An agent edited while an edit still kept its link is
+  found by its recipe — an npx/uvx line that isn't the recipe's, a binary
+  command that isn't the archive's executable under any cache root — and
+  made custom before any agent starts, and before an import re-resolves
+  it. The way back is adding it from the registry again — a deliberate
+  scope decision: a custom agent is the user's, and a reset path earns its
+  place only once a need for one shows.
 - **Agent operations take turns** — one line per agent, a repeat joining,
   Stop and Remove cutting in, and one question before a connection ends:
   [the stores architecture](store-architecture.md#agents).

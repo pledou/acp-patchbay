@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **An edited command is what runs.** Changing the command of an agent
+  added from the ACP registry kept its registry link: a binary agent still
+  downloaded and ran the registry's build, never the command typed —
+  declining the download left it crashed — and an Upgrade would have
+  written the registry's command back over any edited one. Editing the
+  command now makes it a custom agent, which the form says before Save; an
+  agent edited before this release is made custom at first start, wherever
+  it can be told from the registry's own. The way back to the registry is
+  adding it again. (#121)
+
 ## 0.88.2 — 2026-10-21
 
 Security updates to the tools that build and test Patchbay; nothing you
