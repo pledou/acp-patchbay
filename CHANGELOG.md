@@ -17,6 +17,14 @@
   setting stayed forever. The registry's env now seeds the agent's env
   when it is added, and an upgrade only tells you what the registry now
   sets differently, so you can take it in Settings › Agents. (#123)
+- **A message an agent crash cut off waits for you.** When the agent's
+  process died while answering, its reconnect read the session back and
+  left your message as the last line — no error, no answer, nothing to
+  resend it with. The message now waits above the composer marked cut
+  off: send it again or remove it; it is never re-sent on its own, since
+  the agent may already have acted on it. The session read back ends with
+  a note saying the turn was cut, and messages written after it wait their
+  turn behind it. (#120)
 
 ## 0.88.2 — 2026-10-21
 

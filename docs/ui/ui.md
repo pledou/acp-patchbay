@@ -121,7 +121,10 @@ runs (or while the agent is signed out), in firing order. Each row shows its
 words and, with a 📎 count, the chips staged when it was sent — a held prompt
 sends those, never what is staged when it fires. Every row copies and
 removes; the tail row takes back into the composer, its words and its chips
-together.
+together. A message an agent crash cut off mid-answer comes back in front,
+marked **cut off** (warning border): it sends only by its own Send again —
+the agent may already have acted on it — and the rows behind it wait on it;
+removing it lets them go.
 
 Binding rule: **above the input = what the agent will see (context, nouns); below
 the input = how the turn fires (dials + dispatch).**

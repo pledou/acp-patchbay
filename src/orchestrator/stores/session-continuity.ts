@@ -73,6 +73,8 @@ const queuedPromptSchema = z.object({
   draft: z.string().optional(),
   // the chips staged with these words — theirs, whatever is staged after
   chips: z.array(persistedChipSchema).optional(),
+  // a cut turn's words, waiting on the user — never fired on their own
+  cut: z.literal(true).optional(),
 });
 
 /** Row identity is the PAIR — the agent and its own id for the session:

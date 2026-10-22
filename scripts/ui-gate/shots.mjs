@@ -1524,6 +1524,42 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── a cut turn's held words say why and send only by their own Send
+// (#120) — at the narrowest panel, every control in view. Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 280, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.evaluate(() =>
+    window.__patch([
+      { kind: "promptQueueCleared", patchbaySessionId: "s1" },
+      { kind: "promptQueued", patchbaySessionId: "s1", prompt: { id: "cut1", text: "do the thing across the whole repository, every file", cut: true } },
+      { kind: "promptQueued", patchbaySessionId: "s1", prompt: { id: "q2", text: "then this" } },
+    ]),
+  );
+  const row = await p.waitForSelector(".queue-row.cut", { timeout: 3000 }).catch(() => null);
+  const cut = await p.evaluate(() => {
+    const el = document.querySelector(".queue-row.cut");
+    const sendBtn = el?.querySelector('.act[title="Send again"]');
+    const right = Math.max(...[...(el?.querySelectorAll(".act, .x") ?? [])].map((b) => Math.round(b.getBoundingClientRect().right)));
+    sendBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const action = window.__actions.find((a) => a.kind === "sendHeldPrompt");
+    return {
+      why: el?.querySelector(".why")?.textContent?.trim(),
+      plainRows: document.querySelectorAll(".queue-row:not(.cut)").length,
+      plainSend: document.querySelectorAll('.queue-row:not(.cut) .act[title="Send again"]').length,
+      inView: right <= window.innerWidth,
+      action: action && `${action.patchbaySessionId}/${action.promptId}`,
+    };
+  });
+  check(
+    `a cut turn's held words say why and send by their own Send, inside the panel (${JSON.stringify(cut)})`,
+    row !== null && cut.why === "cut off —" && cut.plainRows === 1 && cut.plainSend === 0 && cut.inView && cut.action === "s1/cut1",
+  );
+  await p.screenshot({ path: `${OUT}/queue-cut.png`, fullPage: true });
+  await p.close();
+}
+
 // ── nothing hides at a narrow width (#67): with long unbreakable content
 // everywhere — paths, names, titles — every control stays in view, none
 // behind a sideways scroll, and every overlay opens inside the panel.

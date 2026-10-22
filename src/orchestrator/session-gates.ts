@@ -140,6 +140,18 @@ export class SessionGates {
     return this.turn(patchbaySessionId, words);
   }
 
+  /** The user sends a cut turn's held words: they take their place in
+   * the held ones, and go when the session can take a turn. */
+  sendHeld(patchbaySessionId: PatchbaySessionId, promptId: string): void {
+    if (this.sessions.releaseHeld(patchbaySessionId, promptId)) this.drain(patchbaySessionId);
+  }
+
+  /** The user removes a held prompt. A cut turn's words were what the
+   * ones behind them waited on: those go now, as they would have. */
+  removeHeld(patchbaySessionId: PatchbaySessionId, promptId: string): void {
+    if (this.sessions.removeQueuedPrompt(patchbaySessionId, promptId)?.cut === true) this.drain(patchbaySessionId);
+  }
+
   /** Stop: the session's turn ends, and its held words go with it — Stop
    * means stop; draining them after a deliberate stop would restart what
    * the user just ended. Words asked after the Stop go once the stopped

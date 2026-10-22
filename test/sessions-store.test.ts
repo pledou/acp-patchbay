@@ -726,7 +726,7 @@ describe("SessionsStore", () => {
     await h.pool.stop("sm48c" as PatchbayAgentId);
   });
 
-  it("held words survive an agent crash and fire after reconnect — only the user discards", async () => {
+  it("held words survive an agent crash behind the cut turn's words, which wait on the user — removing them lets the rest fire", async () => {
     const h = harness();
     // The dying script serves one chunk then exits mid-turn; the reconnect
     // uses a healthy one — a crash is an event, not a personality trait.
@@ -745,31 +745,66 @@ describe("SessionsStore", () => {
     await untilTurnOnWire(h, patchbaySessionId);
     await h.gates.prompt(patchbaySessionId, { text: "held words" }); // queued mid-turn
     await promptDone; // the crash step kills the process under the live turn
-    // the exit handler drops the live session — a failed turn drains nothing
     await vi.waitFor(() => expect(h.sessions.isLive(patchbaySessionId)).toBe(false), SETTLE);
 
-    // the crash dropped the live session — but the words held, visibly
-    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "held words" }]);
+    // the cut turn's words wait in front, the held words behind them
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "first", cut: true }, { text: "held words" }]);
 
-    // reconnect: the next prompt joins BEHIND the held words, which fire first
+    // reconnect: nothing fires on its own — the next prompt joins the back
     await h.connect(spec(healthy, "smc1"));
     await h.gates.prompt(patchbaySessionId, { text: "after reconnect" });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.state().promptQueue[patchbaySessionId]?.map((q) => q.text)).toEqual(["first", "held words", "after reconnect"]);
+
+    // the user drops the cut words: what waited behind them goes, in order
+    const cut = h.state().promptQueue[patchbaySessionId]![0]!;
+    h.gates.removeHeld(patchbaySessionId, cut.id);
     let users: string[] = [];
     await vi.waitFor(
       () => {
         users = (h.state().transcripts[patchbaySessionId] ?? [])
           .filter((b) => b.kind === "user")
           .map((b) => (b.kind === "user" ? userPartsText(b.parts) : ""));
-        expect(
-          (h.state().promptQueue[patchbaySessionId]?.length ?? 0) === 0 && users.length >= 2,
-          `held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[patchbaySessionId])} live: ${h.sessions.isLive(patchbaySessionId)} status: ${h.pool.get("smc1" as PatchbayAgentId)?.status}`,
-        ).toBe(true);
+        expect((h.state().promptQueue[patchbaySessionId]?.length ?? 0) === 0 && users.length >= 2, JSON.stringify(users)).toBe(true);
       },
       SETTLE,
     );
     expect(users.slice(-2)).toEqual(["held words", "after reconnect"]);
     await h.pool.stop("smc1" as PatchbayAgentId);
   }, 15000);
+
+  it("a turn its agent's death cut off: the reload says so after the agent's replay, and only the user's Send fires the words again (#120)", async () => {
+    const h = harness();
+    const dying: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "chunk", text: "half" }, { type: "crash" }], stepDelayMs: 200 };
+    await h.connect(spec(dying, "smc2"));
+    const patchbaySessionId = await h.sessions.createSession("smc2" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "do the thing" }).catch(() => {});
+    await vi.waitFor(() => expect(h.sessions.isLive(patchbaySessionId)).toBe(false), SETTLE);
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "do the thing", cut: true }]);
+
+    await h.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "done" }] }, "smc2"));
+    await h.gates.reload(patchbaySessionId);
+    const blocks = h.state().transcripts[patchbaySessionId]!;
+    // the agent's replay first — what it kept of the cut turn — then the note
+    expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "do the thing" }] });
+    expect(blocks.at(-1)).toMatchObject({ kind: "patchbayNotice", text: expect.stringContaining("stopped before its last turn finished") });
+    // the reload fired nothing
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "do the thing", cut: true }]);
+
+    h.gates.sendHeld(patchbaySessionId, h.state().promptQueue[patchbaySessionId]![0]!.id);
+    await vi.waitFor(() => expect(textOf(h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1))).toBe("done"), SETTLE);
+    expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
+    await h.pool.stop("smc2" as PatchbayAgentId);
+  }, 15000);
+
+  it("a turn the agent itself answers with an error holds nothing — only a dead connection cuts (#120)", async () => {
+    const h = harness();
+    await h.connect(spec({ promptError: { code: -32603, message: "Internal error" } }, "smc3"));
+    const patchbaySessionId = await h.sessions.createSession("smc3" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" }).catch(() => {});
+    expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
+    await h.pool.stop("smc3" as PatchbayAgentId);
+  });
 
   // A Stop ends the agent's connection as a crash does, and the session
   // keeps what it holds as it does after a crash: detached, its held words

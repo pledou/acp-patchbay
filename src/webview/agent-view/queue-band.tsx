@@ -9,12 +9,16 @@
 // the tail is the one row whose place a resend keeps. Take-back is refused
 // while the composer holds text — merging two messages into one is the
 // user's call, made with Copy — and the button says so rather than hiding.
+// A cut turn's words (QueuedPrompt.cut) wait on the user in front: they say
+// why, and send only by the row's own Send.
 import type { QueuedPrompt } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { useCopy } from "../shared/use-copy";
 import { COMPOSER_HAS_TEXT } from "./composer/composer-controls";
 import type { PatchbaySessionId } from "../../shared/ids";
+
+const CUT = "The agent stopped before this turn finished — it may or may not have received these words. Send them again, or remove them.";
 
 export function QueueBand({
   patchbaySessionId,
@@ -56,14 +60,25 @@ function QueueRow({
   const send = useActions();
   const { copied, copy } = useCopy();
   return (
-    <div className="queue-row" title={prompt.text}>
-      <Icon name="history" />
+    <div className={prompt.cut ? "queue-row cut" : "queue-row"} title={prompt.cut ? `${CUT}\n\n${prompt.text}` : prompt.text}>
+      <Icon name={prompt.cut ? "warning" : "history"} />
+      {prompt.cut && <span className="why">cut off —</span>}
       <span className="txt">{prompt.text}</span>
       {/* what goes with these words — the chips staged when they were held */}
       {prompt.chips !== undefined && prompt.chips.length > 0 && (
         <span className="att" title={prompt.chips.map((c) => c.label).join(", ")}>
           <Icon name="attach" />
           {prompt.chips.length}
+        </span>
+      )}
+      {prompt.cut && (
+        <span
+          className="act"
+          role="button"
+          title="Send again"
+          onClick={() => send({ kind: "sendHeldPrompt", patchbaySessionId, promptId: prompt.id })}
+        >
+          <Icon name="send" />
         </span>
       )}
       <span

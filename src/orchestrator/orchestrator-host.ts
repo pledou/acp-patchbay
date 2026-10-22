@@ -843,8 +843,11 @@ export class OrchestratorHost {
         void vscode.commands.executeCommand("acpPatchbay.detachSession", action.patchbaySessionId);
         this.orchestrator.sessionGates.open(action.patchbaySessionId, { pin: true });
         break;
+      case "sendHeldPrompt":
+        this.orchestrator.sessionGates.sendHeld(action.patchbaySessionId, action.promptId);
+        break;
       case "removeQueuedPrompt":
-        this.orchestrator.sessions.removeQueuedPrompt(action.patchbaySessionId, action.promptId);
+        this.orchestrator.sessionGates.removeHeld(action.patchbaySessionId, action.promptId);
         break;
       case "reclaimQueuedPrompt":
         this.orchestrator.sessions.takeBack(action.patchbaySessionId, action.promptId);

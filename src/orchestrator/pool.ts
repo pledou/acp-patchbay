@@ -64,6 +64,17 @@ export type LaunchResolver = (
   signal?: AbortSignal,
 ) => Promise<LaunchSpec>;
 
+/** A request its connection's death cut off — the agent's process exited
+ * or its stream closed while the call was out, by no stop of patchbay's.
+ * Not the agent's answer: whether it acted on the call is unknown. Its
+ * message is the death's. */
+export class ConnectionLost extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "ConnectionLost";
+  }
+}
+
 export interface LaunchSpec {
   patchbayAgentId: PatchbayAgentId;
   name: string;
@@ -1021,8 +1032,9 @@ export class AgentPool {
       declared: entry.declared,
     };
     const startedAt = new Date().toISOString();
+    const connection = entry.connection!;
     try {
-      const result: unknown = await entry.connection!.agent.request(method, params);
+      const result: unknown = await connection.agent.request(method, params);
       // The response trust boundary: read before "used" is marked or any
       // caller sees it. A reader's throw is a structurally unusable answer —
       // it rides the same catch as any RPC failure, so the rows go suspect,
@@ -1040,7 +1052,7 @@ export class AgentPool {
           this.hooks.onCapabilityEvidence?.(patchbayAgentId, row, "suspect");
         }
       }
-      throw err;
+      throw connection.signal.aborted && !entry.stopping ? new ConnectionLost(err) : err;
     }
   }
 

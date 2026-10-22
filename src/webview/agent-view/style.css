@@ -957,6 +957,16 @@ body {
   flex: 1;
 }
 
+.queue-row.cut {
+  border-style: solid;
+  border-color: var(--pb-warn);
+}
+
+.queue-row.cut .why {
+  flex-shrink: 0;
+  color: var(--pb-warn);
+}
+
 .queue-row .x,
 .ctx-chip .x {
   flex-shrink: 0;

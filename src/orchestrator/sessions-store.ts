@@ -28,7 +28,6 @@ import {
   type ContextChip,
   type KnobSeed,
   type PersistedChip,
-  type PromptPart,
   type QueuedPrompt,
   type SessionContinuity,
   type SessionSummary,
@@ -53,7 +52,7 @@ import {
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import type { AttachedServer } from "./mcp-servers-store";
-import type { AgentPool } from "./pool";
+import { type AgentPool, ConnectionLost } from "./pool";
 import { newBlockId } from "./block-ids";
 import { SessionStream, type StreamState } from "./session-stream";
 import { agentErrorText } from "./readers/agent-error";
@@ -687,6 +686,20 @@ export class SessionsStore {
     this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, marker] });
   }
 
+  /** Says, at the end of a transcript its agent replayed, that a turn its
+   * agent's death cut off waits in the held queue — the replay shows what
+   * the agent kept of it, and nothing else would. */
+  private sayCutTurn(patchbaySessionId: PatchbaySessionId): void {
+    if (!(this.saved(patchbaySessionId).queue ?? []).some((q) => q.cut === true)) return;
+    const blocks = this.hooks.currentTranscript?.(patchbaySessionId) ?? [];
+    const marker: ChatBlock = {
+      kind: "patchbayNotice",
+      id: newBlockId("patchbay"),
+      text: "The agent stopped before its last turn finished — above is what it kept. The message waits below: send it again, or remove it.",
+    };
+    this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, marker] });
+  }
+
   /** Sanitizer report channel (knobs.ts guards) — dropped wire entries land
    * in the Output channel, never a crash. */
   private readonly knobDropLog = (message: string): void => this.log.info(message);
@@ -706,6 +719,7 @@ export class SessionsStore {
       const { knobs } = await this.attachSession({ via: "load", patchbaySessionId }, patchbayAgentId, {}, signal);
       const session = this.sessions.get(patchbaySessionId);
       if (session !== undefined) this.stream.finishReplay(patchbaySessionId, session);
+      this.sayCutTurn(patchbaySessionId);
       return knobs;
     } finally {
       this.stream.closeReplay(patchbaySessionId);
@@ -1877,13 +1891,31 @@ export class SessionsStore {
 
   /** The held words next in line, taken off the row to start their turn —
    * with their own chips: none, for a row held before held words carried
-   * them. */
+   * them. A cut turn's words in front wait on the user (QueuedPrompt.cut),
+   * and everything behind them waits with them. */
   takeHeld(patchbaySessionId: PatchbaySessionId): QueuedPrompt | undefined {
     const [next, ...rest] = this.saved(patchbaySessionId).queue ?? [];
-    if (next === undefined) return undefined;
+    if (next === undefined || next.cut === true) return undefined;
     this.save(patchbaySessionId, { queue: rest });
     this.hooks.emit({ kind: "promptUnqueued", patchbaySessionId, promptId: next.id });
     return { ...next, chips: next.chips ?? [] };
+  }
+
+  /** The user's word on a cut turn's held words: send them — they fire
+   * like any held words, in their place. False when they wait no more (a
+   * repeat click, a row gone). */
+  releaseHeld(patchbaySessionId: PatchbaySessionId, promptId: string): boolean {
+    const queue = this.saved(patchbaySessionId).queue ?? [];
+    if (!queue.some((q) => q.id === promptId && q.cut === true)) return false;
+    this.requeue(
+      patchbaySessionId,
+      queue.map((q) => {
+        if (q.id !== promptId) return q;
+        const { cut: _sent, ...words } = q;
+        return words;
+      }),
+    );
+    return true;
   }
 
   /** Whether the session's agent stands signed out — its turns hold, never
@@ -1937,7 +1969,7 @@ export class SessionsStore {
    * it here instead; an answer that comes later then changes nothing. */
   async runTurn(
     patchbaySessionId: PatchbaySessionId,
-    words: { text: string; parts?: readonly PromptPart[]; chips?: readonly PersistedChip[] },
+    words: Omit<QueuedPrompt, "id"> & { id?: string },
     signal: AbortSignal,
     spent: () => void,
   ): Promise<void> {
@@ -2144,6 +2176,11 @@ export class SessionsStore {
       // The turn still ended — as an error, said as such with its reason,
       // never silently.
       endTurn("error", null, agentErrorText(err));
+      // Its agent's death cut it off: the words, with the chips they were
+      // sent with, wait at the front of the held ones for the user to send
+      // again or drop — the agent may already have acted on them, so they
+      // never fire on their own.
+      if (err instanceof ConnectionLost) this.reHold(patchbaySessionId, { ...words, chips, cut: true });
       throw err;
     } finally {
       signal.removeEventListener("abort", cancel);
@@ -2156,14 +2193,18 @@ export class SessionsStore {
   }
 
   /** Words whose turn never started go back to the front of the held ones
-   * — anything held meanwhile came after them. The view's rows resync
-   * wholesale, so their order stays the firing order. A session closed
-   * meanwhile took its held words with it, these included. */
+   * — anything held meanwhile came after them. A session closed meanwhile
+   * took its held words with it, these included. */
   reHold(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id"> & { id?: string }): void {
     if (!this.known.has(patchbaySessionId)) return;
     // Words sent now that never left take the chips still staged for them.
     const held = { ...words, id: words.id ?? randomUUID(), chips: words.chips ?? this.takeStaged(patchbaySessionId) };
-    const queue = [held, ...(this.saved(patchbaySessionId).queue ?? [])];
+    this.requeue(patchbaySessionId, [held, ...(this.saved(patchbaySessionId).queue ?? [])]);
+  }
+
+  /** The held words saved as `queue` — the view's rows resync wholesale,
+   * so their order stays the firing order. */
+  private requeue(patchbaySessionId: PatchbaySessionId, queue: QueuedPrompt[]): void {
     this.save(patchbaySessionId, { queue });
     this.hooks.emit({ kind: "promptQueueCleared", patchbaySessionId });
     for (const q of queue) this.hooks.emit({ kind: "promptQueued", patchbaySessionId, prompt: q });
@@ -2231,12 +2272,15 @@ export class SessionsStore {
     }
   }
 
-  /** Drops one still-queued prompt (composer row × button). */
-  removeQueuedPrompt(patchbaySessionId: PatchbaySessionId, promptId: string): void {
+  /** Drops one still-queued prompt (composer row × button) — the row
+   * dropped, or nothing when it was gone already. */
+  removeQueuedPrompt(patchbaySessionId: PatchbaySessionId, promptId: string): QueuedPrompt | undefined {
     const queue = this.saved(patchbaySessionId).queue ?? [];
-    if (!queue.some((q) => q.id === promptId)) return;
+    const removed = queue.find((q) => q.id === promptId);
+    if (removed === undefined) return undefined;
     this.save(patchbaySessionId, { queue: queue.filter((q) => q.id !== promptId) });
     this.hooks.emit({ kind: "promptUnqueued", patchbaySessionId, promptId });
+    return removed;
   }
 
   /** Take the queue's tail back for editing: the row leaves the queue, its

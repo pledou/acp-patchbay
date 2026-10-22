@@ -190,6 +190,8 @@ export type Action =
   | { kind: "stopTurn"; patchbaySessionId: PatchbaySessionId }
   /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
   | { kind: "removeQueuedPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
+  /** Send a held prompt that waits on the user (QueuedPrompt.cut). */
+  | { kind: "sendHeldPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
   /** Take the tail of the queue back into the composer: the row leaves the
    * queue and its editor state becomes the session draft. Tail only — the
    * one row whose place a resend keeps — and only into an empty composer;
@@ -376,6 +378,11 @@ export interface QueuedPrompt {
    * fires. Absent on direct words (a turn takes what is staged) and on
    * rows held before held prompts carried chips (those send none). */
   chips?: readonly PersistedChip[];
+  /** The words of a turn its agent's death cut off, after they were sent —
+   * the agent may or may not have them. They wait at the front for the
+   * user to send again or remove, never fired on their own, and the words
+   * held behind them wait too. */
+  cut?: true;
 }
 
 /** A context chip as persisted in the session-continuity store. Bytes never

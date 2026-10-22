@@ -51,6 +51,8 @@ deliverable.
   agent is visible from the first frame, not only once connected.
 - A crash is visible the moment it happens, with its reason and the process's
   own stderr inline; recovery is one action (the crash banner's Restart).
+  A message the crash cut off mid-answer is never lost or re-sent on its
+  own: it waits above the composer, marked cut off, to send again or remove.
   Stop/restart beyond that are Settings troubleshooting controls — the
   process is never the user's chore: it starts when a session needs it and
   stays warm for the next one. Stop and Remove end whatever the agent is

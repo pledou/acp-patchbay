@@ -910,7 +910,18 @@ reload's re-attach), holds while the agent isn't running, and never
 auto-retries after a failure — a send that never started, drained or sent
 straight from the composer, re-holds the words at the front (unless Stop,
 Delete or Close ended it, which ends its words too); a send the wire settled is
-spent, visible as a user message with its error turn. The composer **draft** is per-session state owned
+spent, visible as a user message with its error turn. A send its agent's
+death cut off — the connection gone under a call patchbay didn't stop
+(`ConnectionLost`, read at the pool's request chokepoint) — is neither: the
+agent may or may not have the words, and no stop reason says which. They go
+back to the front of the queue marked cut, with the chips they were sent
+with, and wait on the user — the row says why and sends only by its own
+Send; × drops them and releases the words behind, which waited on them.
+Never fired on its own: the agent may already have acted. A `session/load`
+replay rebuilds the transcript from what the agent kept, so a notice closes
+it saying the turn was cut. The agent's own error answer is not a cut. A
+window reload mid-turn is the user's own act and no cut (a deliberate scope
+decision; a remote reconnect's reload is the known gap). The composer **draft** is per-session state owned
 here, not by the webview (render-only): the composer edits the live buffer,
 saves debounced, and reads the durable copy only when switching sessions —
 its own echoes never fight the keyboard. A new chat in flight leaves no
